@@ -4,12 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Caries Prevention Quest</title>
-  <meta name="description" content="A kid-friendly web game teaching prevention for high-caries-risk children: OHI, sealants, and regular dental visits." />
+  <meta name="description" content="A kid-friendly web game teaching prevention for high-caries-risk children: OHI, floss, sealants, and regular dental visits." />
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-sky-50">
   <div id="root"></div>
 
+  <!-- React + Babel -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -17,8 +18,9 @@
   <script type="text/babel">
     const { useEffect, useMemo, useRef, useState } = React;
 
-    const Tooth = ({ clean = false }) => (
-      <div className={`w-7 h-7 rounded-md m-0.5 transition-colors duration-150 ${clean ? "bg-white" : "bg-yellow-300"} shadow-sm border border-gray-300`} />
+    /* ---------- UI bits ---------- */
+    const Tooth = ({ clean = false, size="w-7 h-7" }) => (
+      <div className={`${size} rounded-md m-0.5 transition-colors duration-150 ${clean ? "bg-white" : "bg-yellow-300"} shadow-sm border border-gray-300`} />
     );
 
     const Progress = ({ value }) => (
@@ -69,10 +71,9 @@
       return time;
     }
 
-    /* ---------------- Level 1: Brush Boss (20 teeth; 2x10; 10 dirty) ---------------- */
+    /* ---------- Level 1: Brush Boss (20 teeth; 2x10; exactly 10 dirty) ---------- */
     function BrushBoss({ onComplete, onFail }) {
-      const cols = 10, rows = 2, total = cols * rows; // 20 total
-      // exactly 10 plaque = true, 10 clean = false
+      const cols = 10, rows = 2, total = cols * rows; // 20
       const [grid, setGrid] = useState(() => {
         const arr = Array(total).fill(false);
         let dirty = 10;
@@ -82,30 +83,28 @@
         }
         return arr;
       });
-      const [brushing, setBrushing] = useState(false);
-      const needed = 10; // exactly 10 to remove
+      const needed = 10;
       const cleaned = useMemo(() => 10 - grid.filter(Boolean).length, [grid]);
+      const [brushing, setBrushing] = useState(false);
       const time = useTimer(true, 30, () => onFail?.());
 
       const handleBrush = (idx) => {
         setGrid(g => {
-          if (!g[idx]) return g; // already clean
+          if (!g[idx]) return g;
           const copy = [...g];
           copy[idx] = false;
           return copy;
         });
       };
 
-      useEffect(() => {
-        if (cleaned >= needed) onComplete?.();
-      }, [cleaned, needed, onComplete]);
+      useEffect(() => { if (cleaned >= needed) onComplete?.(); }, [cleaned, needed, onComplete]);
 
       return (
         <Card
           title="Level 1 – Brush Boss (OHI)"
           footer={<div>
             <p className="mb-1">Tip: Brush all tooth surfaces in small circles for 2 minutes, twice a day.</p>
-            <p>Goal: There are <b>20 teeth (2 rows × 10)</b> and <b>10 yellow</b>. Clean all 10 yellow teeth before time runs out.</p>
+            <p>Goal: There are <b>20 teeth</b> in <b>2 rows × 10</b> and <b>10 yellow</b>. Clean all 10 yellow teeth.</p>
           </div>}
         >
           <div className="flex items-center justify-between mb-3">
@@ -143,7 +142,83 @@
       );
     }
 
-    /* ---------------- Level 2: Sealant Splash (win at 20% or cross) ---------------- */
+    /* ---------- NEW Level 2: Floss Frenzy (clear interdental debris) ---------- */
+    function FlossFrenzy({ onComplete, onFail }) {
+      // 2 rows; 5 gaps per row (10 gaps total). 6 start with debris.
+      const gapsPerRow = 5;
+      const rows = 2;
+      const totalGaps = gapsPerRow * rows;
+      const [gaps, setGaps] = useState(() => {
+        const arr = Array(totalGaps).fill(false); // false = clean gap
+        let debris = 6;
+        while (debris > 0) {
+          const i = Math.floor(Math.random() * totalGaps);
+          if (!arr[i]) { arr[i] = true; debris--; } // true = debris present
+        }
+        return arr;
+      });
+      const time = useTimer(true, 25, () => onFail?.());
+      const cleared = useMemo(() => gaps.filter(v => !v).length, [gaps]);
+      const needToClear = totalGaps; // must make all gaps clean
+
+      const flossGap = (i) => setGaps(g => {
+        if (!g[i]) return g; // already clean
+        const copy = [...g]; copy[i] = false; return copy;
+      });
+
+      useEffect(() => {
+        if (cleared === needToClear) onComplete?.();
+      }, [cleared, needToClear, onComplete]);
+
+      // little visual row with teeth and clickable narrow "gap" buttons
+      const Gap = ({ dirty, onDrag }) => (
+        <div
+          className={`w-3 h-10 mx-1 rounded-md border transition-all ${
+            dirty ? "bg-yellow-300 border-yellow-400" : "bg-white border-gray-300"
+          }`}
+          onMouseDown={() => onDrag()}
+          onMouseEnter={(e) => (e.buttons === 1) && onDrag()}
+          onTouchStart={onDrag}
+        />
+      );
+
+      const Row = ({ rowIndex }) => {
+        const start = rowIndex * gapsPerRow;
+        // Layout: T | gap | T | gap | ... | T (we visually draw teeth blocks; gaps clickable)
+        const teethCount = gapsPerRow + 1; // 6 teeth around 5 gaps
+        const segments = [];
+        for (let t = 0; t < teethCount; t++) {
+          segments.push(<Tooth key={`t-${rowIndex}-${t}`} size="w-8 h-8" clean />);
+          if (t < gapsPerRow) {
+            const gi = start + t;
+            segments.push(<Gap key={`g-${gi}`} dirty={gaps[gi]} onDrag={() => flossGap(gi)} />);
+          }
+        }
+        return <div className="flex items-center justify-center my-2">{segments}</div>;
+      };
+
+      return (
+        <Card
+          title="Level 2 – Floss Frenzy (Interdental Cleaning)"
+          footer={<div>
+            <p className="mb-1">Tip: Slide the floss gently between teeth, curve around each tooth in a “C” shape, and move up & down.</p>
+            <p>Goal: Clear all <b>interdental debris</b> (tap/drag on the yellow gaps). Timer is ticking!</p>
+          </div>}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm">Time: <span className="font-semibold">{time}s</span></div>
+            <div className="text-sm">Gaps Cleaned: <span className="font-semibold">{cleared}/{totalGaps}</span></div>
+          </div>
+          <Progress value={(cleared / totalGaps) * 100} />
+          <div className="mt-3">
+            <Row rowIndex={0} />
+            <Row rowIndex={1} />
+          </div>
+        </Card>
+      );
+    }
+
+    /* ---------- Level 3: Sealant Splash (≥20% or cross) ---------- */
     function SealantSplash({ onComplete, onFail }) {
       const canvasRef = useRef(null);
       const [coveredPct, setCoveredPct] = useState(0);
@@ -186,7 +261,6 @@
         const img = ctx.getImageData(0, 0, W, H).data;
 
         let blueish = 0, white = 0;
-        // overall coarse coverage
         for (let i = 0; i < img.length; i += 4 * 8) {
           const r = img[i], g = img[i + 1], b = img[i + 2], a = img[i + 3];
           if (r > 230 && g > 230 && b > 230) white++;
@@ -194,35 +268,24 @@
         }
         const pct = Math.min(100, Math.round((blueish / (white + blueish + 1)) * 100));
 
-        // cross detection: check central vertical & horizontal bands for blue
-        const band = 15; // px half-width
+        // cross detector
+        const band = 15;
         let vBlue = 0, vTotal = 0, hBlue = 0, hTotal = 0;
-
-        // vertical band around W/2
         for (let x = Math.floor(W/2 - band); x <= Math.floor(W/2 + band); x++) {
           for (let y = 0; y < H; y++) {
             const idx = (y * W + x) * 4;
             const r = img[idx], g = img[idx+1], b = img[idx+2], a = img[idx+3];
-            if (a === 0) continue;
-            vTotal++;
-            if (b > 150 && r < 120) vBlue++;
+            if (a === 0) continue; vTotal++; if (b > 150 && r < 120) vBlue++;
           }
         }
-        // horizontal band around H/2
         for (let y = Math.floor(H/2 - band); y <= Math.floor(H/2 + band); y++) {
           for (let x = 0; x < W; x++) {
             const idx = (y * W + x) * 4;
             const r = img[idx], g = img[idx+1], b = img[idx+2], a = img[idx+3];
-            if (a === 0) continue;
-            hTotal++;
-            if (b > 150 && r < 120) hBlue++;
+            if (a === 0) continue; hTotal++; if (b > 150 && r < 120) hBlue++;
           }
         }
-
-        const vFrac = vBlue / Math.max(1, vTotal);
-        const hFrac = hBlue / Math.max(1, hTotal);
-        const isCross = vFrac > 0.35 && hFrac > 0.35; // fairly generous
-
+        const isCross = (vBlue/Math.max(1,vTotal)) > 0.35 && (hBlue/Math.max(1,hTotal)) > 0.35;
         return { pct, isCross };
       };
 
@@ -246,10 +309,10 @@
 
       return (
         <Card
-          title="Level 2 – Sealant Splash"
+          title="Level 3 – Sealant Splash"
           footer={<div>
             <p className="mb-1">Fact: Sealants protect deep grooves of molars from food and bacteria.</p>
-            <p>Goal: Paint like the picture (a cross through the center) <b>or</b> reach <b>≥20%</b> coverage before time runs out.</p>
+            <p>Goal: Draw a cross through the center <b>or</b> reach <b>≥20%</b> coverage before time runs out.</p>
           </div>}
         >
           <div className="flex items-center justify-between mb-3">
@@ -277,24 +340,19 @@
       );
     }
 
-    /* ---------------- Level 3: High-risk plan (every 3 months exactly) ---------------- */
+    /* ---------- Level 4: High-risk plan (exactly 4 visits, every 3 months) ---------- */
     function CheckupChallenge({ onComplete, onFail }) {
       const [months, setMonths] = useState(Array.from({ length: 12 }, (_, i) => ({ i, appt: false })));
       const [msg, setMsg] = useState("");
 
-      const toggleMonth = (i) => {
-        setMonths(arr => arr.map(m => (m.i === i ? { ...m, appt: !m.appt } : m)));
-        setMsg("");
-      };
+      const toggleMonth = (i) => { setMonths(arr => arr.map(m => (m.i === i ? { ...m, appt: !m.appt } : m))); setMsg(""); };
 
       const validate = () => {
         const picks = months.filter(m => m.appt).map(m => m.i).sort((a,b) => a-b);
         if (picks.length !== 4) { setMsg("Select exactly FOUR checkups for a 3-month interval plan."); onFail?.(); return; }
-        // check every interval is 3 months (circular)
         for (let k = 0; k < 4; k++) {
-          const a = picks[k];
-          const b = picks[(k+1) % 4];
-          const diff = (b - a + 12) % 12; // wrap
+          const a = picks[k], b = picks[(k+1)%4];
+          const diff = (b - a + 12) % 12;
           if (diff !== 3) { setMsg("Intervals must be exactly 3 months apart."); onFail?.(); return; }
         }
         setMsg("Great plan! Four visits, each 3 months apart.");
@@ -303,7 +361,7 @@
 
       return (
         <Card
-          title="Level 3 – Checkup Challenge (High-risk = every 3 months)"
+          title="Level 4 – Checkup Challenge (High-risk = every 3 months)"
           footer={<div>
             <p className="mb-1">Goal: Select <b>exactly four</b> checkups spaced <b>every 3 months</b> (e.g., Jan/Apr/Jul/Oct), then submit.</p>
             <p>Tip: Regular 3-month recalls help with fluoride, sealants, and early detection.</p>
@@ -324,9 +382,8 @@
               </button>
             ))}
           </div>
-
           <div className="mt-4 flex items-center">
-            <Button variant="default" onClick={validate}>Submit Plan</Button>
+            <Button onClick={validate}>Submit Plan</Button>
             {msg && <span className="ml-3 text-sm">{msg}</span>}
           </div>
         </Card>
@@ -341,7 +398,6 @@
       const [level, setLevel] = useState(0);
       const [score, setScore] = useState(0);
       const [showHowTo, setShowHowTo] = useState(true);
-
       const next = () => setLevel(l => l + 1);
 
       return (
@@ -354,9 +410,10 @@
           {showHowTo && (
             <Card title="How to Play">
               <ul className="list-disc ml-6 text-sm text-gray-700 space-y-1">
-                <li><b>Brush Boss:</b> There are 20 teeth (2×10). Clean the 10 yellow ones.</li>
+                <li><b>Brush Boss:</b> 20 teeth (2×10). Clean the 10 yellow ones.</li>
+                <li><b>Floss Frenzy:</b> Clear all interdental debris by dragging/tapping the yellow gaps.</li>
                 <li><b>Sealant Splash:</b> Draw a cross through the center or reach ≥20% coverage.</li>
-                <li><b>Checkup Challenge:</b> High-risk = every 3 months. Pick exactly 4 months, then submit.</li>
+                <li><b>Checkup Challenge:</b> High-risk = exactly four visits, every 3 months.</li>
               </ul>
               <div className="mt-4"><Button onClick={() => setShowHowTo(false)} variant="success">Start</Button></div>
             </Card>
@@ -371,9 +428,9 @@
 
           {level === 1 && (
             <div className="w-full flex flex-col items-center gap-4">
-              <FactBanner text="OHI: Brush twice daily for 2 minutes with fluoride toothpaste. Replace your brush every ~3 months." />
-              <SealantSplash
-                onComplete={() => { setScore(s => s + 120); next(); }}
+              <FactBanner text="Floss once a day. Slide between teeth, curve around each tooth in a “C” shape, and move up & down." />
+              <FlossFrenzy
+                onComplete={() => { setScore(s => s + 100); next(); }}
                 onFail={() => { setScore(s => Math.max(0, s - 20)); next(); }}
               />
             </div>
@@ -381,7 +438,17 @@
 
           {level === 2 && (
             <div className="w-full flex flex-col items-center gap-4">
-              <FactBanner text="Sealants: A quick, painless coating for molars that keeps food out of deep grooves and helps prevent cavities." />
+              <FactBanner text="Sealants coat the deep grooves of molars and can dramatically reduce cavities." />
+              <SealantSplash
+                onComplete={() => { setScore(s => s + 120); next(); }}
+                onFail={() => { setScore(s => Math.max(0, s - 20)); next(); }}
+              />
+            </div>
+          )}
+
+          {level === 3 && (
+            <div className="w-full flex flex-col items-center gap-4">
+              <FactBanner text="High-risk children often need recall every 3 months for fluoride, sealants, and early detection." />
               <CheckupChallenge
                 onComplete={() => { setScore(s => s + 80); next(); }}
                 onFail={() => { setScore(s => Math.max(0, s - 20)); }}
@@ -389,15 +456,15 @@
             </div>
           )}
 
-          {level >= 3 && (
+          {level >= 4 && (
             <Card title="You Did It!">
               <p className="text-gray-700">
-                Awesome work! You learned three big cavity-fighters: <b>brushing (OHI)</b>,
-                <b> sealants</b>, and <b>regular dental checkups</b>.
+                You mastered <b>brushing</b>, <b>flossing</b>, <b>sealants</b>, and <b>regular checkups</b>.
               </p>
               <ul className="list-disc ml-6 mt-3 text-gray-700 text-sm">
                 <li>Brush 2×/day for 2 minutes with fluoride toothpaste.</li>
-                <li>Ask about sealants for new molars (typically 6–12 years old).</li>
+                <li>Floss once a day to clean where brushes can’t reach.</li>
+                <li>Ask about sealants for new molars.</li>
                 <li>High-risk recall: every 3 months.</li>
               </ul>
               <div className="mt-4 flex items-center">
@@ -412,8 +479,7 @@
       );
     }
 
-    const root = ReactDOM.createRoot(document.getElementById("root"));
-    root.render(<CariesPreventionGame />);
+    ReactDOM.createRoot(document.getElementById("root")).render(<CariesPreventionGame />);
   </script>
 </body>
 </html>
