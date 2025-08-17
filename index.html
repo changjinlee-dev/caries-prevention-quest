@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Caries Prevention Quest</title>
+  <meta name="description" content="A kid-friendly web game teaching prevention for high-caries-risk children: OHI, sealants, and regular dental visits." />
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-sky-50">
+  <div id="root"></div>
+
+  <!-- React & ReactDOM (UMD) -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel so JSX works in the browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Game code -->
+  <script type="text/babel">
+    // Use React hooks from global React
+    const { useEffect, useMemo, useRef, useState } = React;
+
+    /** Caries Prevention Quest (single-file React) */
+
+    const Tooth = ({ clean = false }) => (
+      <div
+        className={`w-6 h-6 rounded-md m-0.5 transition-colors duration-150 ${
+          clean ? "bg-white" : "bg-yellow-300"
+        } shadow-sm border border-gray-300`}
+      />
+    );
+
+    const Progress = ({ value }) => (
+      <div className="w-full bg-gray-200 rounded-full h-3">
+        <div
+          className="h-3 rounded-full transition-all"
+          style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+        />
+      </div>
+    );
+
+    const Card = ({ title, children, footer }) => (
+      <div className="bg-white rounded-2xl shadow-lg p-5 border border-gray-100 w-full max-w-4xl">
+        <h2 className="text-xl font-semibold mb-3">{title}</h2>
+        <div>{children}</div>
+        {footer && <div className="mt-4 text-sm text-gray-600">{footer}</div>}
+      </div>
+    );
+
+    const Button = ({ children, onClick, variant = "default", disabled }) => (
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={`px-4 py-2 rounded-xl font-medium shadow-sm transition-all mr-2 mb-2 ${
+          variant === "default"
+            ? "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300"
+            : variant === "ghost"
+            ? "bg-white border border-gray-300 hover:bg-gray-50"
+            : variant === "success"
+            ? "bg-emerald-600 text-white hover:bg-emerald-700"
+            : "bg-slate-800 text-white hover:bg-slate-900"
+        }`}
+      >
+        {children}
+      </button>
+    );
+
+    function useTimer(active, seconds, onDone) {
+      const [time, setTime] = useState(seconds);
+      useEffect(() => {
+        if (!active) return;
+        setTime(seconds);
+      }, [seconds, active]);
+      useEffect(() => {
+        if (!active) return;
+        const id = setInterval(() => {
+          setTime((t) => {
+            if (t <= 1) {
+              clearInterval(id);
+              onDone?.();
+              return 0;
+            }
+            return t - 1;
+          });
+        }, 1000);
+        return () => clearInterval(id);
+      }, [active, onDone]);
+      return time;
+    }
+
+    // Level 1: Brush Boss (OHI)
+    function BrushBoss({ onComplete, onFail }) {
+      const size = 8; // 8x8 grid
+      const [grid, setGrid] = useState(() =>
+        Array.from({ length: size * size }, () => (Math.random() > 0.65 ? true : false))
+      ); // true = plaque present
+      const [brushing, setBrushing] = useState(false);
+      const [cleaned, setCleaned] = useState(0);
+      const needed = useMemo(() => grid.filter((p) => p).length, [grid]);
+      const time = useTimer(true, 30, () => onFail?.());
+
+      const handleBrush = (idx) => {
+        setGrid((g) => {
+          if (!g[idx]) return g; // already clean or no plaque
+          const copy = [...g];
+          copy[idx] = false;
+          setCleaned((c) => c + 1);
+          return copy;
+        });
+      };
+
+      useEffect(() => {
+        if (needed > 0 && cleaned >= needed) {
+          onComplete?.();
+        }
+      }, [cleaned, needed, onComplete]);
+
+      return (
+        <Card
+          title="Level 1 – Brush Boss (OHI)"
+          footer={
+            <div>
+              <p className="mb-1">
+                Tip: Brush all tooth surfaces in small circles for 2 minutes, twice a day. Don’t forget the gumline!
+              </p>
+              <p>
+                Goal: Remove all the yellow plaque before time runs out. Drag your mouse (or finger) over the tiles.
+              </p>
+            </div>
+          }
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm">Time: <span className="font-semibold">{time}s</span></div>
+            <div className="text-sm">Cleaned: <span className="font-semibold">{cleaned}/{needed}</span></div>
+          </div>
+          <Progress value={(cleaned / Math.max(1, needed)) * 100} />
+          <div
+            className="select-none grid mt-3"
+            style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+            onMouseDown={() => setBrushing(true)}
+            onMouseUp={() => setBrushing(false)}
+            onMouseLeave={() => setBrushing(false)}
+            onTouchStart={() => setBrushing(true)}
+            onTouchEnd={() => setBrushing(false)}
+          >
+            {grid.map((hasPlaque, i) => (
+              <div
+                key={i}
+                onMouseEnter={() => brushing && handleBrush(i)}
+                onMouseDown={() => handleBrush(i)}
+                onTouchMove={(e) => {
+                  const t = e.touches?.[0] || e.changedTouches?.[0];
+                  if (!t) return;
+                  const el = document.elementFromPoint(t.clientX, t.clientY);
+                  if (el?.dataset?.idx) handleBrush(Number(el.dataset.idx));
+                }}
+                data-idx={i}
+              >
+                <Tooth clean={!hasPlaque} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      );
+    }
+
+    // Level 2: Sealant Splash
+    function SealantSplash({ onComplete, onFail }) {
+      const canvasRef = useRef(null);
+      const [coveredPct, setCoveredPct] = useState(0);
+      const [painting, setPainting] = useState(false);
+      const time = useTimer(true, 35, () => onFail?.());
+
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext("2d");
+        const W = canvas.width;
+        const H = canvas.height;
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeStyle = "#cbd5e1";
+        ctx.lineWidth = 3;
+
+        // Tooth shape
+        ctx.beginPath();
+        ctx.moveTo(W * 0.2, H * 0.6);
+        ctx.quadraticCurveTo(W * 0.2, H * 0.2, W * 0.5, H * 0.2);
+        ctx.quadraticCurveTo(W * 0.8, H * 0.2, W * 0.8, H * 0.6);
+        ctx.quadraticCurveTo(W * 0.8, H * 0.85, W * 0.65, H * 0.9);
+        ctx.quadraticCurveTo(W * 0.5, H * 0.95, W * 0.35, H * 0.9);
+        ctx.quadraticCurveTo(W * 0.2, H * 0.85, W * 0.2, H * 0.6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Fissures
+        ctx.strokeStyle = "#64748b";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(W * 0.3, H * 0.5);
+        ctx.bezierCurveTo(W * 0.4, H * 0.45, W * 0.6, H * 0.55, W * 0.7, H * 0.5);
+        ctx.moveTo(W * 0.5, H * 0.3);
+        ctx.bezierCurveTo(W * 0.5, H * 0.45, W * 0.55, H * 0.6, W * 0.5, H * 0.7);
+        ctx.stroke();
+      }, []);
+
+      const paint = (x, y) => {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext("2d");
+        ctx.globalCompositeOperation = "source-over";
+        ctx.fillStyle = "rgba(59,130,246,0.6)"; // translucent blue sealant
+        ctx.beginPath();
+        ctx.arc(x, y, 12, 0, Math.PI * 2);
+        ctx.fill();
+
+        // coverage sampling (coarse)
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        let blueish = 0, white = 0;
+        for (let i = 0; i < img.data.length; i += 4 * 8) {
+          const r = img.data[i];
+          const g = img.data[i + 1];
+          const b = img.data[i + 2];
+          if (r > 230 && g > 230 && b > 230) white++;        // tooth white base
+          if (b > 150 && r < 120) blueish++;                 // our blue sealant
+        }
+        const pct = Math.min(100, Math.round((blueish / (white + blueish + 1)) * 100));
+        setCoveredPct(pct);
+        if (pct >= 80) onComplete?.();
+      };
+
+      const handlePointer = (clientX, clientY) => {
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        if (painting) paint(x, y);
+      };
+
+      return (
+        <Card
+          title="Level 2 – Sealant Splash"
+          footer={
+            <div>
+              <p className="mb-1">
+                Fact: Sealants protect the deep grooves of molars from food and bacteria and can dramatically reduce cavities.
+              </p>
+              <p>Goal: Paint the grooves. Cover at least 80% before time runs out.</p>
+            </div>
+          }
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm">Time: <span className="font-semibold">{time}s</span></div>
+            <div className="text-sm">Coverage: <span className="font-semibold">{coveredPct}%</span></div>
+          </div>
+          <canvas
+            ref={canvasRef}
+            width={520}
+            height={320}
+            className="bg-white rounded-2xl border border-gray-200 touch-none"
+            onMouseDown={() => setPainting(true)}
+            onMouseUp={() => setPainting(false)}
+            onMouseLeave={() => setPainting(false)}
+            onMouseMove={(e) => handlePointer(e.clientX, e.clientY)}
+            onTouchStart={() => setPainting(true)}
+            onTouchEnd={() => setPainting(false)}
+            onTouchMove={(e) => {
+              const t = e.touches?.[0] || e.changedTouches?.[0];
+              if (t) handlePointer(t.clientX, t.clientY);
+            }}
+          />
+          <div className="mt-3 text-sm text-gray-600">
+            Tip: Click or touch and drag to paint the blue sealant.
+          </div>
+        </Card>
+      );
+    }
+
+    // Level 3: Checkup Challenge (regular dental visits)
+    function CheckupChallenge({ onComplete }) {
+      const [months, setMonths] = useState(
+        Array.from({ length: 12 }, (_, i) => ({ i, appt: false }))
+      );
+      const apptCount = months.filter((m) => m.appt).length;
+
+      const toggleMonth = (i) => {
+        setMonths((arr) => arr.map((m) => (m.i === i ? { ...m, appt: !m.appt } : m)));
+      };
+
+      useEffect(() => {
+        if (apptCount >= 2) onComplete?.();
+      }, [apptCount, onComplete]);
+
+      return (
+        <Card
+          title="Level 3 – Checkup Challenge (Every 6 Months)"
+          footer={
+            <div>
+              <p className="mb-1">Goal: Place at least TWO checkups in the year (about every 6 months).</p>
+              <p>
+                Tip: Kids at high caries risk may need even more frequent recalls. Regular visits allow fluoride, sealants, and early detection.
+              </p>
+            </div>
+          }
+        >
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+            {months.map((m) => (
+              <button
+                key={m.i}
+                onClick={() => toggleMonth(m.i)}
+                className={`h-20 rounded-2xl border flex items-center justify-center text-lg font-semibold transition-all ${
+                  m.appt ? "bg-emerald-100 border-emerald-400" : "bg-white border-gray-200 hover:bg-gray-50"
+                }`}
+                aria-label={`Month ${m.i + 1}${m.appt ? " appointment set" : ""}`}
+              >
+                {new Date(2025, m.i, 1).toLocaleString(undefined, { month: "short" })}
+                {m.appt && <span className="ml-2">🦷</span>}
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 text-sm">Appointments set: <b>{apptCount}</b>/2</div>
+        </Card>
+      );
+    }
+
+    const FactBanner = ({ text }) => (
+      <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-xl text-sm">
+        {text}
+      </div>
+    );
+
+    function CariesPreventionGame() {
+      const [level, setLevel] = useState(0);
+      const [score, setScore] = useState(0);
+      const [showHowTo, setShowHowTo] = useState(true);
+
+      const next = () => setLevel((l) => l + 1);
+
+      return (
+        <div className="min-h-screen w-full bg-gradient-to-b from-sky-50 to-white flex flex-col items-center px-4 py-8">
+          <div className="w-full max-w-4xl flex items-center justify-between mb-6">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Caries Prevention Quest</h1>
+            <div className="text-sm text-gray-600">Score: <span className="font-semibold">{score}</span></div>
+          </div>
+
+          {showHowTo && (
+            <Card title="How to Play" footer={null}>
+              <ul className="list-disc ml-6 text-sm text-gray-700 space-y-1">
+                <li><b>Brush Boss:</b> Clean all yellow plaque tiles before the timer ends.</li>
+                <li><b>Sealant Splash:</b> Paint the blue sealant over molar grooves to reach 80% coverage.</li>
+                <li><b>Checkup Challenge:</b> Place two dental checkups on the calendar (about 6 months apart).</li>
+              </ul>
+              <div className="mt-4">
+                <Button onClick={() => setShowHowTo(false)} variant="success">Start</Button>
+              </div>
+            </Card>
+          )}
+
+          {!showHowTo && level === 0 && (
+            <BrushBoss
+              onComplete={() => {
+                setScore((s) => s + 100);
+                next();
+              }}
+              onFail={() => {
+                setScore((s) => Math.max(0, s - 20));
+                next();
+              }}
+            />
+          )}
+
+          {level === 1 && (
+            <div className="w-full flex flex-col items-center gap-4">
+              <FactBanner text="OHI: Brush twice daily for 2 minutes with fluoride toothpaste. Replace your brush every ~3 months." />
+              <SealantSplash
+                onComplete={() => {
+                  setScore((s) => s + 120);
+                  next();
+                }}
+                onFail={() => {
+                  setScore((s) => Math.max(0, s - 20));
+                  next();
+                }}
+              />
+            </div>
+          )}
+
+          {level === 2 && (
+            <div className="w-full flex flex-col items-center gap-4">
+              <FactBanner text="Sealants: A quick, painless coating for molars that keeps food out of deep grooves and helps prevent cavities." />
+              <CheckupChallenge
+                onComplete={() => {
+                  setScore((s) => s + 80);
+                  next();
+                }}
+              />
+            </div>
+          )}
+
+          {level >= 3 && (
+            <Card title="You Did It!" footer={null}>
+              <p className="text-gray-700">
+                Awesome work! You learned three big cavity-fighters: <b>brushing (OHI)</b>,
+                <b> sealants</b>, and <b>regular dental checkups</b>.
+              </p>
+              <ul className="list-disc ml-6 mt-3 text-gray-700 text-sm">
+                <li>Brush 2×/day for 2 minutes with fluoride toothpaste.</li>
+                <li>Ask about sealants for new molars (typically 6–12 years old).</li>
+                <li>Plan checkups roughly every 6 months — more often if risk is high.</li>
+              </ul>
+              <div className="mt-4 flex items-center">
+                <Button onClick={() => { window.location.reload(); }}>
+                  Play Again
+                </Button>
+                <Button variant="ghost" onClick={() => window.print()}>Print Tips</Button>
+              </div>
+            </Card>
+          )}
+
+          <footer className="mt-8 text-xs text-gray-500">
+            For educational use. No PHI collected.
+          </footer>
+        </div>
+      );
+    }
+
+    // Mount the app
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<CariesPreventionGame />);
+  </script>
+</body>
+</html>
