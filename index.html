@@ -18,11 +18,64 @@
   <script type="text/babel">
     const { useEffect, useMemo, useRef, useState } = React;
 
-    /* ---------- Shared UI ---------- */
-    const Tooth = ({ clean = false, size="w-7 h-7" }) => (
-      <div className={`${size} rounded-md m-0.5 transition-colors duration-150 ${clean ? "bg-white" : "bg-yellow-300"} shadow-sm border border-gray-300`} />
-    );
+    /* ---------- Tooth SVGs (primary dentition silhouettes) ---------- */
+    const PRIMARY_ARCH = [
+      "secondMolar","firstMolar","canine","lateralIncisor","centralIncisor",
+      "centralIncisor","lateralIncisor","canine","firstMolar","secondMolar"
+    ];
 
+    function pathForTooth(type){
+      // Simple, kid-friendly silhouettes (viewBox 0 0 100 120)
+      switch(type){
+        case "centralIncisor":
+          return "M50 6 C36 6,22 20,22 38 C22 60,36 64,38 78 C42 96,48 112,50 112 C52 112,58 96,62 78 C64 64,78 60,78 38 C78 20,64 6,50 6 Z";
+        case "lateralIncisor":
+          return "M50 8 C38 8,26 22,26 40 C26 58,36 62,38 76 C41 92,47 110,50 110 C53 110,59 92,62 76 C64 62,74 58,74 40 C74 22,62 8,50 8 Z";
+        case "canine":
+          return "M50 4 C42 10,30 26,28 42 C26 58,36 68,38 82 C42 100,48 112,50 112 C52 112,58 100,62 82 C64 68,74 58,72 42 C70 26,58 10,50 4 Z";
+        case "firstMolar":
+          return "M30 18 C22 18,18 30,18 42 C18 58,30 70,36 82 C40 92,44 108,50 108 C56 108,60 92,64 82 C70 70,82 58,82 42 C82 30,78 18,70 18 C60 12,40 12,30 18 Z";
+        case "secondMolar":
+        default:
+          return "M26 20 C18 20,14 32,14 44 C14 62,28 72,34 86 C38 98,44 110,50 110 C56 110,62 98,66 86 C72 72,86 62,86 44 C86 32,82 20,74 20 C62 12,38 12,26 20 Z";
+      }
+    }
+
+    const Tooth = ({ clean = false, size="w-10 h-12", type="firstMolar", label }) => {
+      const fill = clean ? "#ffffff" : "#fde68a";        // yellow when dirty
+      const stroke = clean ? "#cbd5e1" : "#f59e0b";
+      const d = pathForTooth(type);
+      return (
+        <svg
+          viewBox="0 0 100 120"
+          className={`${size} m-0.5 drop-shadow-sm`}
+          role="img"
+          aria-label={label || `${type} ${clean ? "clean" : "needs cleaning"}`}
+        >
+          <defs>
+            <radialGradient id="shine" cx="45%" cy="28%" r="60%">
+              <stop offset="0%" stopColor="#ffffff"/>
+              <stop offset="70%" stopColor={clean ? "#f3f6fb" : "#fef3c7"}/>
+              <stop offset="100%" stopColor={clean ? "#e5edf7" : "#fde68a"}/>
+            </radialGradient>
+          </defs>
+          <path d={d} fill={clean ? "url(#shine)" : fill} stroke={stroke} strokeWidth="2"/>
+          {/* Simple detail lines by type */}
+          {type.includes("Molar") && (
+            <path d="M28 48 C42 38,58 58,72 48 M50 30 C52 46,52 62,50 76"
+                  stroke={clean ? "#94a3b8" : "#b45309"} strokeWidth="2" fill="none" opacity="0.45" />
+          )}
+          {type.includes("Incisor") && (
+            <path d="M30 44 C40 38,60 38,70 44" stroke={clean ? "#94a3b8" : "#b45309"} strokeWidth="2" fill="none" opacity="0.35" />
+          )}
+          {type === "canine" && (
+            <path d="M35 46 C50 36,65 46,65 46" stroke={clean ? "#94a3b8" : "#b45309"} strokeWidth="2" fill="none" opacity="0.35" />
+          )}
+        </svg>
+      );
+    };
+
+    /* ---------- Shared UI ---------- */
     const Progress = ({ value }) => (
       <div className="w-full bg-gray-200 rounded-full h-3">
         <div className="h-3 rounded-full transition-all bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
@@ -71,62 +124,52 @@
       return time;
     }
 
-    /* ---------- Level 1: Candy Crack (cause & clean) — with smoothed severity bar ---------- */
+    /* ---------- Level 1: Candy Crack ---------- */
     function CandyCrack({ onComplete }) {
       const sceneRef = useRef(null);
-
-      // Logical state
       const [hits, setHits] = useState(0);
       const [severity, setSeverity] = useState(0);   // 0..100 (logical)
-      const [played, setPlayed] = useState(false);   // dropped candy at least once
+      const [played, setPlayed] = useState(false);
       const [brushing, setBrushing] = useState(false);
       const [cap, setCap] = useState("Drop a candy onto the tooth.");
       const canNext = played && severity === 0;
 
-      // Refs to avoid stale values inside rAF loops
       const hitsRef = useRef(0);
       const sevRef  = useRef(0);
       useEffect(() => { hitsRef.current = hits; }, [hits]);
       useEffect(() => { sevRef.current  = severity; }, [severity]);
 
-      // Smoothed visual bar for severity
       const [sevBar, setSevBar] = useState(0);
       const sevBarRef = useRef(0);
       const sevAnimRef = useRef(null);
 
-      // Whenever logical severity changes, tween the bar toward it
       useEffect(() => {
         if (sevAnimRef.current) cancelAnimationFrame(sevAnimRef.current);
-
         const step = () => {
-          const target = sevRef.current;     // logical 0..100
-          const curr   = sevBarRef.current;  // visual
+          const target = sevRef.current;
+          const curr   = sevBarRef.current;
           const diff   = target - curr;
-
           if (Math.abs(diff) < 0.2) {
             sevBarRef.current = target;
             setSevBar(target);
             sevAnimRef.current = null;
             return;
           }
-          const next = curr + diff * 0.2; // easing factor
+          const next = curr + diff * 0.2;
           sevBarRef.current = next;
           setSevBar(next);
           sevAnimRef.current = requestAnimationFrame(step);
         };
-
         sevAnimRef.current = requestAnimationFrame(step);
         return () => sevAnimRef.current && cancelAnimationFrame(sevAnimRef.current);
       }, [severity]);
 
-      // Cache DOM nodes
       const els = useRef({});
       useEffect(() => {
         const scene = sceneRef.current;
         const toothSVG = scene.querySelector("#toothSVG");
         els.current = {
-          scene,
-          toothSVG,
+          scene, toothSVG,
           cracks: scene.querySelector("#cracks"),
           pit: scene.querySelector("#pit"),
           mainCrack: scene.querySelector("#mainCrack"),
@@ -191,15 +234,12 @@
         pit.setAttribute("opacity", s > 0 ? Math.min(0.85, 0.2 + (s/100)).toFixed(2) : "0.0");
       }
 
-      // single point of truth for impact updates
       function applyImpact(deltaSev = 9) {
         const nh = hitsRef.current + 1;
         const ns = clamp(sevRef.current + deltaSev, 0, 100);
-
         setHits(nh);
         setSeverity(ns);
         setPlayed(true);
-
         hitsRef.current = nh;
         sevRef.current  = ns;
 
@@ -250,8 +290,6 @@
 
       function resetAll() {
         setHits(0); setSeverity(0); hitsRef.current=0; sevRef.current=0;
-        // also reset the smoothed bar immediately
-        sevBarRef.current = 0; setSevBar(0);
         setPlayed(false); setBrushing(false);
         setCap("Reset. Drop a candy onto the tooth.");
         const { cracks, pit, plaque, mainCrack, branch1, branch2, branch3, brush } = els.current;
@@ -262,12 +300,10 @@
         if (brush) { brush.style.opacity = "0"; brush.style.transform = "translateX(0) rotate(0deg)"; }
       }
 
-      // Side-to-side brushing; stops exactly at severity 0
       function runBrush() {
         const { scene, brush, foam, plaque } = els.current;
         if (!scene || !brush) return;
 
-        // brushing before any candy: cause a small crack
         if (!played && sevRef.current === 0) {
           setCap("Oops! Scrubbing without candy still irritated a spot.");
           applyImpact(10);
@@ -295,7 +331,6 @@
           brush.style.transform = `translateX(${offset}px) rotate(${tilt}deg)`;
           if (foam) foam.style.opacity = (0.25 + 0.5*Math.abs(Math.sin(offset*0.12))).toFixed(2);
 
-          // cleaning effect
           const ns = Math.max(0, sevRef.current - 0.28);
           setSeverity(ns); sevRef.current = ns;
           applyCrackVisuals(ns, hitsRef.current);
@@ -320,8 +355,8 @@
         requestAnimationFrame(scrub);
       }
 
-      const hitPct = Math.min(100, hits * 8);                         // ~13 hits = 100%
-      const severityPct = Math.min(100, Math.max(0, sevBar));         // smoothed value
+      const hitPct = Math.min(100, hits * 8);
+      const severityPct = Math.min(100, Math.max(0, sevBar));
 
       return (
         <Card
@@ -339,7 +374,6 @@
             <span className="text-sm text-gray-600">{cap}</span>
           </div>
 
-          {/* HUD */}
           <div className="grid grid-cols-2 gap-4 mb-3">
             <div>
               <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
@@ -359,7 +393,6 @@
             </div>
           </div>
 
-          {/* Scene */}
           <div ref={sceneRef} className="relative h-[420px] rounded-2xl overflow-hidden bg-gradient-to-b from-sky-100 to-sky-200 border border-sky-300">
             <div className="absolute left-3 bottom-3 bg-white/80 text-slate-800 text-sm px-3 py-2 rounded-xl border border-white">
               {cap}
@@ -400,7 +433,7 @@
       );
     }
 
-    /* ---------- Level 2: Brush Boss (your original) ---------- */
+    /* ---------- Level 2: Brush Boss (maxillary flipped + robust hit-testing) ---------- */
     function BrushBoss({ onComplete, onFail }) {
       const cols = 10, rows = 2, total = cols * rows; // 20
       const [grid, setGrid] = useState(() => {
@@ -426,6 +459,22 @@
         });
       };
 
+      // helper for mouse/touch move across nested elements
+      const handleFromEvent = (e) => {
+        let clientX, clientY;
+        if (e.touches && (e.touches[0] || e.changedTouches?.[0])) {
+          const t = e.touches[0] || e.changedTouches[0];
+          clientX = t.clientX; clientY = t.clientY;
+        } else {
+          clientX = e.clientX; clientY = e.clientY;
+        }
+        const el = document.elementFromPoint(clientX, clientY);
+        const cell = el?.closest?.("[data-idx]");
+        if (!cell) return;
+        const idx = Number(cell.dataset.idx);
+        if (!Number.isNaN(idx)) handleBrush(idx);
+      };
+
       useEffect(() => { if (cleaned >= needed) onComplete?.(); }, [cleaned, needed, onComplete]);
 
       return (
@@ -436,56 +485,67 @@
             <p>Goal: There are <b>20 teeth</b> in <b>2 rows × 10</b> and <b>10 yellow</b>. Clean all 10 yellow teeth.</p>
           </div>}
         >
+          {/* header row (closed properly) */}
           <div className="flex items-center justify-between mb-3">
             <div className="text-sm">Time: <span className="font-semibold">{time}s</span></div>
             <div className="text-sm">Cleaned: <span className="font-semibold">{cleaned}/10</span></div>
           </div>
+
           <Progress value={(cleaned / 10) * 100} />
+
+          {/* grid */}
           <div
-            className="select-none grid mt-3"
+            className="select-none grid mt-3 gap-1"
             style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
             onMouseDown={() => setBrushing(true)}
             onMouseUp={() => setBrushing(false)}
             onMouseLeave={() => setBrushing(false)}
+            onMouseMove={(e) => { if (brushing) handleFromEvent(e); }}
             onTouchStart={() => setBrushing(true)}
             onTouchEnd={() => setBrushing(false)}
+            onTouchMove={(e) => handleFromEvent(e)}
           >
-            {grid.map((hasPlaque, i) => (
-              <div
-                key={i}
-                onMouseEnter={() => brushing && handleBrush(i)}
-                onMouseDown={() => handleBrush(i)}
-                onTouchMove={(e) => {
-                  const t = e.touches?.[0] || e.changedTouches?.[0];
-                  if (!t) return;
-                  const el = document.elementFromPoint(t.clientX, t.clientY);
-                  if (el?.dataset?.idx) handleBrush(Number(el.dataset.idx));
-                }}
-                data-idx={i}
-              >
-                <Tooth clean={!hasPlaque} />
-              </div>
-            ))}
+            {grid.map((hasPlaque, i) => {
+              const col = i % cols;
+              const row = Math.floor(i / cols);      // 0 = TOP (maxillary), 1 = BOTTOM (mandibular)
+              const type = PRIMARY_ARCH[col];
+              const flipped = row === 0;              // flip the top row only
+              return (
+                <div
+                  key={i}
+                  data-idx={i}
+                  className="flex items-center justify-center"
+                  aria-label={flipped ? "Maxillary tooth" : "Mandibular tooth"}
+                  onMouseEnter={() => brushing && handleBrush(i)}
+                  onMouseDown={() => handleBrush(i)}
+                >
+                  {/* Flip vertically with scaleY(-1) */}
+                  <div className={`transform ${flipped ? "-scale-y-100" : ""}`} data-idx={i}>
+                    <Tooth clean={!hasPlaque} type={type} size="w-10 h-12 md:w-12 md:h-14" />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </Card>
       );
     }
 
-    /* ---------- Level 3: Floss Frenzy ---------- */
+    /* ---------- Level 3: Floss Frenzy (full arch rows; top row flipped) ---------- */
     function FlossFrenzy({ onComplete, onFail }) {
-      const gapsPerRow = 5;
+      const gapsPerRow = 9; // 10 teeth per row → 9 contacts
       const rows = 2;
       const totalGaps = gapsPerRow * rows;
       const [gaps, setGaps] = useState(() => {
         const arr = Array(totalGaps).fill(false);
-        let debris = 6;
+        let debris = 12;
         while (debris > 0) {
           const i = Math.floor(Math.random() * totalGaps);
           if (!arr[i]) { arr[i] = true; debris--; }
         }
         return arr;
       });
-      const time = useTimer(true, 25, () => onFail?.());
+      const time = useTimer(true, 30, () => onFail?.());
       const cleared = useMemo(() => gaps.filter(v => !v).length, [gaps]);
       const needToClear = totalGaps;
 
@@ -498,7 +558,7 @@
 
       const Gap = ({ dirty, onDrag }) => (
         <div
-          className={`w-3 h-10 mx-1 rounded-md border transition-all ${
+          className={`w-2 h-12 mx-1 rounded-md border transition-all ${
             dirty ? "bg-yellow-300 border-yellow-400" : "bg-white border-gray-300"
           }`}
           onMouseDown={() => onDrag()}
@@ -509,16 +569,35 @@
 
       const Row = ({ rowIndex }) => {
         const start = rowIndex * gapsPerRow;
-        const teethCount = gapsPerRow + 1;
+        const teethCount = gapsPerRow + 1; // 10 teeth
+        const flipped = rowIndex === 0;    // flip the top row (maxillary)
+
         const segments = [];
         for (let t = 0; t < teethCount; t++) {
-          segments.push(<Tooth key={`t-${rowIndex}-${t}`} size="w-8 h-8" clean />);
+          const type = PRIMARY_ARCH[t];
+          segments.push(
+            <div key={`t-${rowIndex}-${t}`} className={`transform ${flipped ? "-scale-y-100" : ""}`}>
+              <Tooth size="w-10 h-12 md:w-12 md:h-14" clean type={type} />
+            </div>
+          );
           if (t < gapsPerRow) {
             const gi = start + t;
-            segments.push(<Gap key={`g-${gi}`} dirty={gaps[gi]} onDrag={() => flossGap(gi)} />);
+            segments.push(
+              <div key={`gwrap-${gi}`} className={`flex items-center ${flipped ? "transform -scale-y-100" : ""}`} data-idx={`gap-${gi}`}>
+                <Gap dirty={gaps[gi]} onDrag={() => flossGap(gi)} />
+              </div>
+            );
           }
         }
-        return <div className="flex items-center justify-center my-2">{segments}</div>;
+
+        return (
+          <div
+            className="flex items-center justify-center my-2"
+            aria-label={flipped ? "Maxillary arch" : "Mandibular arch"}
+          >
+            {segments}
+          </div>
+        );
       };
 
       return (
@@ -733,8 +812,8 @@
             <Card title="How to Play">
               <ul className="list-disc ml-6 text-sm text-gray-700 space-y-1">
                 <li><b>Level 1 – Candy Crack:</b> Drop candy to make cracks, then brush side‑to‑side to clean back to 0.</li>
-                <li><b>Level 2 – Brush Boss:</b> 20 teeth (2×10). Clean the 10 yellow ones.</li>
-                <li><b>Level 3 – Floss Frenzy:</b> Clear interdental debris by dragging/tapping the yellow gaps.</li>
+                <li><b>Level 2 – Brush Boss:</b> 20 primary teeth (2×10). Clean the 10 yellow ones.</li>
+                <li><b>Level 3 – Floss Frenzy:</b> Full arch per row — clear all interdental debris.</li>
                 <li><b>Level 4 – Sealant Splash:</b> Draw a cross through the center or reach ≥20% coverage.</li>
                 <li><b>Level 5 – Checkup Challenge:</b> High‑risk = exactly four visits, every 3 months.</li>
               </ul>
