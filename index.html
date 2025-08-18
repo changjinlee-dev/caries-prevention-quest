@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Caries Prevention Quest</title>
-  <meta name="description" content="A kid-friendly web game teaching prevention for high-caries-risk children: OHI, floss, sealants, and regular dental visits." />
+  <meta name="description" content="A kid-friendly web game teaching prevention for high-caries-risk children: candy cracks, OHI, floss, sealants, and regular visits." />
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-sky-50">
@@ -18,14 +18,14 @@
   <script type="text/babel">
     const { useEffect, useMemo, useRef, useState } = React;
 
-    /* ---------- UI bits ---------- */
+    /* ---------- Shared UI ---------- */
     const Tooth = ({ clean = false, size="w-7 h-7" }) => (
       <div className={`${size} rounded-md m-0.5 transition-colors duration-150 ${clean ? "bg-white" : "bg-yellow-300"} shadow-sm border border-gray-300`} />
     );
 
     const Progress = ({ value }) => (
       <div className="w-full bg-gray-200 rounded-full h-3">
-        <div className="h-3 rounded-full transition-all" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+        <div className="h-3 rounded-full transition-all bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
       </div>
     );
 
@@ -47,7 +47,7 @@
             : variant === "ghost"
             ? "bg-white border border-gray-300 hover:bg-gray-50"
             : variant === "success"
-            ? "bg-emerald-600 text-white hover:bg-emerald-700"
+            ? "bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-emerald-300"
             : "bg-slate-800 text-white hover:bg-slate-900"
         }`}
       >
@@ -71,7 +71,336 @@
       return time;
     }
 
-    /* ---------- Level 1: Brush Boss (20 teeth; 2x10; exactly 10 dirty) ---------- */
+    /* ---------- Level 1: Candy Crack (cause & clean) — with smoothed severity bar ---------- */
+    function CandyCrack({ onComplete }) {
+      const sceneRef = useRef(null);
+
+      // Logical state
+      const [hits, setHits] = useState(0);
+      const [severity, setSeverity] = useState(0);   // 0..100 (logical)
+      const [played, setPlayed] = useState(false);   // dropped candy at least once
+      const [brushing, setBrushing] = useState(false);
+      const [cap, setCap] = useState("Drop a candy onto the tooth.");
+      const canNext = played && severity === 0;
+
+      // Refs to avoid stale values inside rAF loops
+      const hitsRef = useRef(0);
+      const sevRef  = useRef(0);
+      useEffect(() => { hitsRef.current = hits; }, [hits]);
+      useEffect(() => { sevRef.current  = severity; }, [severity]);
+
+      // Smoothed visual bar for severity
+      const [sevBar, setSevBar] = useState(0);
+      const sevBarRef = useRef(0);
+      const sevAnimRef = useRef(null);
+
+      // Whenever logical severity changes, tween the bar toward it
+      useEffect(() => {
+        if (sevAnimRef.current) cancelAnimationFrame(sevAnimRef.current);
+
+        const step = () => {
+          const target = sevRef.current;     // logical 0..100
+          const curr   = sevBarRef.current;  // visual
+          const diff   = target - curr;
+
+          if (Math.abs(diff) < 0.2) {
+            sevBarRef.current = target;
+            setSevBar(target);
+            sevAnimRef.current = null;
+            return;
+          }
+          const next = curr + diff * 0.2; // easing factor
+          sevBarRef.current = next;
+          setSevBar(next);
+          sevAnimRef.current = requestAnimationFrame(step);
+        };
+
+        sevAnimRef.current = requestAnimationFrame(step);
+        return () => sevAnimRef.current && cancelAnimationFrame(sevAnimRef.current);
+      }, [severity]);
+
+      // Cache DOM nodes
+      const els = useRef({});
+      useEffect(() => {
+        const scene = sceneRef.current;
+        const toothSVG = scene.querySelector("#toothSVG");
+        els.current = {
+          scene,
+          toothSVG,
+          cracks: scene.querySelector("#cracks"),
+          pit: scene.querySelector("#pit"),
+          mainCrack: scene.querySelector("#mainCrack"),
+          branch1: scene.querySelector("#branch1"),
+          branch2: scene.querySelector("#branch2"),
+          branch3: scene.querySelector("#branch3"),
+          plaque: scene.querySelector("#plaque"),
+          brush: scene.querySelector("#brush"),
+          foam: scene.querySelector("#foam"),
+        };
+        applyCrackVisuals(0, 0);
+      }, []);
+
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+      function flashImpact(pxX, pxY) {
+        const { toothSVG } = els.current;
+        if (!toothSVG) return;
+        const pt = toothSVG.createSVGPoint();
+        pt.x = pxX; pt.y = pxY;
+        const p = pt.matrixTransform(toothSVG.getScreenCTM().inverse());
+        const circ = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circ.setAttribute("cx", p.x);
+        circ.setAttribute("cy", 110);
+        circ.setAttribute("r", 3);
+        circ.setAttribute("fill", "#fff");
+        circ.setAttribute("opacity", "0.9");
+        toothSVG.appendChild(circ);
+        circ.animate([{opacity:0.9,r:3},{opacity:0.0,r:22}],{duration:280,easing:'ease-out'}).onfinish=()=>circ.remove();
+      }
+
+      function applyCrackVisuals(nextSeverity, nextHits) {
+        const { cracks, pit, mainCrack, branch1, branch2, branch3 } = els.current;
+        if (!cracks || !pit) return;
+        const s = clamp(nextSeverity, 0, 100);
+
+        if (s <= 0 && nextHits === 0) {
+          cracks.style.opacity = "0";
+          pit.setAttribute("opacity","0.0");
+          pit.setAttribute("r","0.1");
+          [branch1, branch2, branch3].forEach(p=>p && (p.style.opacity="0"));
+          [mainCrack, branch1, branch2, branch3].forEach(p=>p && (p.style.strokeWidth="1.4"));
+          cracks.style.stroke = "#4b3b34";
+          return;
+        }
+
+        cracks.style.opacity = s > 0 ? "1" : "0.0001";
+        const sw = 1.4 + (s/100)*3.8;
+        [mainCrack, branch1, branch2, branch3].forEach(p=>p && (p.style.strokeWidth = sw.toFixed(2)));
+
+        const r = Math.round(0x4b + (0x1a-0x4b)*(s/100));
+        const g = Math.round(0x3b + (0x14-0x3b)*(s/100));
+        const b = Math.round(0x34 + (0x12-0x34)*(s/100));
+        cracks.style.stroke = `rgb(${r},${g},${b})`;
+
+        branch1.style.opacity = s > 20 ? "1" : "0";
+        branch2.style.opacity = s > 45 ? "1" : "0";
+        branch3.style.opacity = s > 70 ? "1" : "0";
+
+        const pitR = 0.5 + (s/100)*10;
+        pit.setAttribute("r", pitR.toFixed(2));
+        pit.setAttribute("opacity", s > 0 ? Math.min(0.85, 0.2 + (s/100)).toFixed(2) : "0.0");
+      }
+
+      // single point of truth for impact updates
+      function applyImpact(deltaSev = 9) {
+        const nh = hitsRef.current + 1;
+        const ns = clamp(sevRef.current + deltaSev, 0, 100);
+
+        setHits(nh);
+        setSeverity(ns);
+        setPlayed(true);
+
+        hitsRef.current = nh;
+        sevRef.current  = ns;
+
+        const { plaque } = els.current;
+        if (plaque) plaque.style.opacity = String(Math.min(0.45, 0.10 + nh * 0.03));
+        applyCrackVisuals(ns, nh);
+      }
+
+      function impactAt(pxX, pxY) {
+        setCap("Ouch! The crack deepens and darkens.");
+        applyImpact(9);
+        flashImpact(pxX, pxY);
+      }
+
+      function dropCandy() {
+        const { scene } = els.current;
+        if (!scene) return;
+        const rect = scene.getBoundingClientRect();
+        const minX = rect.width*0.23, maxX = rect.width*0.77;
+        const left = minX + Math.random()*(maxX-minX);
+
+        const c = document.createElement("div");
+        c.className = "absolute w-7 h-7 rounded-full";
+        c.style.background = "repeating-linear-gradient(45deg,#ff7aa2 0 7px,#ffd4e3 7px 14px)";
+        c.style.boxShadow = "inset 0 0 6px rgba(0,0,0,.3)";
+        c.style.left = left + "px";
+        c.style.top  = "-18px";
+        c.style.borderRadius = "50%";
+        c.style.transform = "translate(-50%,-50%) rotate(0deg)";
+        scene.appendChild(c);
+
+        let y = -18, vy = 1 + Math.random()*0.7, rot = 0;
+        const g = 0.28, targetY = rect.height*0.28;
+
+        const tick = () => {
+          vy += g; y += vy; rot += 6 + Math.random()*2;
+          c.style.transform = `translate(-50%,-50%) translateY(${y}px) rotate(${rot}deg)`;
+          if (y >= targetY) {
+            c.style.transition = "opacity .16s ease"; c.style.opacity = "0";
+            impactAt(left, targetY);
+            setTimeout(()=>c.remove(), 180);
+            return;
+          }
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }
+
+      function resetAll() {
+        setHits(0); setSeverity(0); hitsRef.current=0; sevRef.current=0;
+        // also reset the smoothed bar immediately
+        sevBarRef.current = 0; setSevBar(0);
+        setPlayed(false); setBrushing(false);
+        setCap("Reset. Drop a candy onto the tooth.");
+        const { cracks, pit, plaque, mainCrack, branch1, branch2, branch3, brush } = els.current;
+        if (cracks) cracks.style.opacity = "0";
+        if (pit) { pit.setAttribute("r","0.1"); pit.setAttribute("opacity","0.0"); }
+        if (plaque) plaque.style.opacity = "0.10";
+        [mainCrack,branch1,branch2,branch3].forEach(p=>p && (p.style.strokeWidth="1.4"));
+        if (brush) { brush.style.opacity = "0"; brush.style.transform = "translateX(0) rotate(0deg)"; }
+      }
+
+      // Side-to-side brushing; stops exactly at severity 0
+      function runBrush() {
+        const { scene, brush, foam, plaque } = els.current;
+        if (!scene || !brush) return;
+
+        // brushing before any candy: cause a small crack
+        if (!played && sevRef.current === 0) {
+          setCap("Oops! Scrubbing without candy still irritated a spot.");
+          applyImpact(10);
+        }
+
+        if (sevRef.current === 0) { setCap("Already clean — great job!"); return; }
+        if (brushing) return;
+        setBrushing(true);
+
+        const rect = scene.getBoundingClientRect();
+        brush.style.opacity = "1";
+        brush.style.transition = "none";
+        brush.style.left = `${rect.width/2 - 80}px`;
+        brush.style.top  = `${rect.height*0.22}px`;
+
+        let offset = 0, dir = 1, passes = 0;
+        const maxSwing = 34, speed = 3.4;
+
+        const scrub = () => {
+          if (sevRef.current <= 0) { finishBrushing(true); return; }
+
+          offset += dir * speed;
+          if (offset > maxSwing || offset < -maxSwing) { dir *= -1; passes++; }
+          const tilt = (offset / maxSwing) * 6;
+          brush.style.transform = `translateX(${offset}px) rotate(${tilt}deg)`;
+          if (foam) foam.style.opacity = (0.25 + 0.5*Math.abs(Math.sin(offset*0.12))).toFixed(2);
+
+          // cleaning effect
+          const ns = Math.max(0, sevRef.current - 0.28);
+          setSeverity(ns); sevRef.current = ns;
+          applyCrackVisuals(ns, hitsRef.current);
+
+          if (plaque) {
+            plaque.style.opacity = String(
+              Math.max(0.05, parseFloat(plaque.style.opacity || "0.10") - 0.004)
+            );
+          }
+
+          if (passes < 60 && sevRef.current > 0) requestAnimationFrame(scrub);
+          else finishBrushing(sevRef.current === 0);
+        };
+
+        function finishBrushing(clean) {
+          brush.style.opacity = "0";
+          brush.style.transform = "translateX(0) rotate(0deg)";
+          setBrushing(false);
+          setCap(clean ? "Tooth is clean — severity 0." : "Cleaner! Keep brushing to reach 0.");
+        }
+
+        requestAnimationFrame(scrub);
+      }
+
+      const hitPct = Math.min(100, hits * 8);                         // ~13 hits = 100%
+      const severityPct = Math.min(100, Math.max(0, sevBar));         // smoothed value
+
+      return (
+        <Card
+          title="Level 1 – Candy Crack (Cause & Clean)"
+          footer={<div>
+            <p className="mb-1">Goal: Drop candy to make cracks, then brush side‑to‑side to reduce severity back to <b>0</b>.</p>
+            <p>Unlock <b>Next Level</b> after you’ve dropped candy at least once and fully cleaned the tooth.</p>
+          </div>}
+        >
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <Button onClick={dropCandy}>🍬 Drop Candy</Button>
+            <Button variant="ghost" onClick={runBrush}>🪥 Toothbrush</Button>
+            <Button variant="ghost" onClick={resetAll}>Reset</Button>
+            <Button variant="success" disabled={!canNext} onClick={() => onComplete?.()}>Next Level ▶</Button>
+            <span className="text-sm text-gray-600">{cap}</span>
+          </div>
+
+          {/* HUD */}
+          <div className="grid grid-cols-2 gap-4 mb-3">
+            <div>
+              <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                <span>Candy hits</span><span className="font-semibold">{hits}</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-3">
+                <div className="h-3 rounded-full bg-cyan-500 transition-all" style={{width:`${hitPct}%`}} />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                <span>Crack severity</span><span className="font-semibold">{Math.round(severity)}</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-3">
+                <div className="h-3 rounded-full bg-rose-500" style={{width:`${severityPct.toFixed(1)}%`}} />
+              </div>
+            </div>
+          </div>
+
+          {/* Scene */}
+          <div ref={sceneRef} className="relative h-[420px] rounded-2xl overflow-hidden bg-gradient-to-b from-sky-100 to-sky-200 border border-sky-300">
+            <div className="absolute left-3 bottom-3 bg-white/80 text-slate-800 text-sm px-3 py-2 rounded-xl border border-white">
+              {cap}
+            </div>
+
+            <svg id="toothSVG" viewBox="0 0 400 360" className="w-full h-full">
+              <defs>
+                <radialGradient id="enamelGrad" cx="50%" cy="35%" r="65%">
+                  <stop offset="0%" stopColor="#ffffff"/><stop offset="70%" stopColor="#f3f6fb"/><stop offset="100%" stopColor="#e6ebf2"/>
+                </radialGradient>
+                <filter id="soft" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="6"/></filter>
+              </defs>
+
+              <path id="plaque" d="M200 48 C160 30,114 62,118 116 C122 170,152 188,164 226 C176 266,184 308,200 308
+                                    C216 308,224 266,236 226 C248 188,278 170,282 116 C286 62,240 30,200 48 Z"
+                    fill="#e8d57a" opacity="0.10" filter="url(#soft)"></path>
+
+              <path d="M200 48 C160 30,114 62,118 116 C122 170,152 188,164 226 C176 266,184 308,200 308
+                       C216 308,224 266,236 226 C248 188,278 170,282 116 C286 62,240 30,200 48 Z"
+                    fill="url(#enamelGrad)" stroke="#d1d9e6" strokeWidth="1.2"></path>
+
+              <g id="cracks" fill="none" stroke="#4b3b34" strokeLinecap="round" strokeLinejoin="round" opacity="0.0">
+                <path id="mainCrack" d="M190 115 C 196 126, 202 140, 208 154 C 210 160, 206 170, 212 182"/>
+                <path id="branch1" d="M202 138 C 190 146, 182 154, 176 162" opacity="0"/>
+                <path id="branch2" d="M206 152 C 220 160, 230 168, 236 176" opacity="0"/>
+                <path id="branch3" d="M196 132 C 188 124, 180 120, 172 118" opacity="0"/>
+              </g>
+
+              <circle id="pit" cx="206" cy="152" r="0.1" fill="#3b2b25" opacity="0.0"></circle>
+            </svg>
+
+            <div id="brush" className="absolute left-[-9999px] top-0 opacity-0 w-40 h-9 rounded-lg bg-blue-500 shadow-md flex items-center pl-4 gap-2 will-change-transform">
+              <div className="w-20 h-4 bg-blue-200 rounded"></div>
+              <div id="foam" className="absolute left-16 top-1 w-20 h-6 rounded-full bg-white/80 blur-[1px] opacity-0"></div>
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
+    /* ---------- Level 2: Brush Boss (your original) ---------- */
     function BrushBoss({ onComplete, onFail }) {
       const cols = 10, rows = 2, total = cols * rows; // 20
       const [grid, setGrid] = useState(() => {
@@ -101,7 +430,7 @@
 
       return (
         <Card
-          title="Level 1 – Brush Boss (OHI)"
+          title="Level 2 – Brush Boss (OHI)"
           footer={<div>
             <p className="mb-1">Tip: Brush all tooth surfaces in small circles for 2 minutes, twice a day.</p>
             <p>Goal: There are <b>20 teeth</b> in <b>2 rows × 10</b> and <b>10 yellow</b>. Clean all 10 yellow teeth.</p>
@@ -142,35 +471,31 @@
       );
     }
 
-    /* ---------- NEW Level 2: Floss Frenzy (clear interdental debris) ---------- */
+    /* ---------- Level 3: Floss Frenzy ---------- */
     function FlossFrenzy({ onComplete, onFail }) {
-      // 2 rows; 5 gaps per row (10 gaps total). 6 start with debris.
       const gapsPerRow = 5;
       const rows = 2;
       const totalGaps = gapsPerRow * rows;
       const [gaps, setGaps] = useState(() => {
-        const arr = Array(totalGaps).fill(false); // false = clean gap
+        const arr = Array(totalGaps).fill(false);
         let debris = 6;
         while (debris > 0) {
           const i = Math.floor(Math.random() * totalGaps);
-          if (!arr[i]) { arr[i] = true; debris--; } // true = debris present
+          if (!arr[i]) { arr[i] = true; debris--; }
         }
         return arr;
       });
       const time = useTimer(true, 25, () => onFail?.());
       const cleared = useMemo(() => gaps.filter(v => !v).length, [gaps]);
-      const needToClear = totalGaps; // must make all gaps clean
+      const needToClear = totalGaps;
 
       const flossGap = (i) => setGaps(g => {
-        if (!g[i]) return g; // already clean
+        if (!g[i]) return g;
         const copy = [...g]; copy[i] = false; return copy;
       });
 
-      useEffect(() => {
-        if (cleared === needToClear) onComplete?.();
-      }, [cleared, needToClear, onComplete]);
+      useEffect(() => { if (cleared === needToClear) onComplete?.(); }, [cleared, needToClear, onComplete]);
 
-      // little visual row with teeth and clickable narrow "gap" buttons
       const Gap = ({ dirty, onDrag }) => (
         <div
           className={`w-3 h-10 mx-1 rounded-md border transition-all ${
@@ -184,8 +509,7 @@
 
       const Row = ({ rowIndex }) => {
         const start = rowIndex * gapsPerRow;
-        // Layout: T | gap | T | gap | ... | T (we visually draw teeth blocks; gaps clickable)
-        const teethCount = gapsPerRow + 1; // 6 teeth around 5 gaps
+        const teethCount = gapsPerRow + 1;
         const segments = [];
         for (let t = 0; t < teethCount; t++) {
           segments.push(<Tooth key={`t-${rowIndex}-${t}`} size="w-8 h-8" clean />);
@@ -199,7 +523,7 @@
 
       return (
         <Card
-          title="Level 2 – Floss Frenzy (Interdental Cleaning)"
+          title="Level 3 – Floss Frenzy (Interdental Cleaning)"
           footer={<div>
             <p className="mb-1">Tip: Slide the floss gently between teeth, curve around each tooth in a “C” shape, and move up & down.</p>
             <p>Goal: Clear all <b>interdental debris</b> (tap/drag on the yellow gaps). Timer is ticking!</p>
@@ -218,7 +542,7 @@
       );
     }
 
-    /* ---------- Level 3: Sealant Splash (≥20% or cross) ---------- */
+    /* ---------- Level 4: Sealant Splash ---------- */
     function SealantSplash({ onComplete, onFail }) {
       const canvasRef = useRef(null);
       const [coveredPct, setCoveredPct] = useState(0);
@@ -234,7 +558,6 @@
         ctx.strokeStyle = "#cbd5e1";
         ctx.lineWidth = 3;
 
-        // Tooth shape
         ctx.beginPath();
         ctx.moveTo(W * 0.2, H * 0.6);
         ctx.quadraticCurveTo(W * 0.2, H * 0.2, W * 0.5, H * 0.2);
@@ -244,7 +567,6 @@
         ctx.quadraticCurveTo(W * 0.2, H * 0.85, W * 0.2, H * 0.6);
         ctx.closePath(); ctx.fill(); ctx.stroke();
 
-        // Fissures
         ctx.strokeStyle = "#64748b"; ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(W * 0.3, H * 0.5);
@@ -268,7 +590,6 @@
         }
         const pct = Math.min(100, Math.round((blueish / (white + blueish + 1)) * 100));
 
-        // cross detector
         const band = 15;
         let vBlue = 0, vTotal = 0, hBlue = 0, hTotal = 0;
         for (let x = Math.floor(W/2 - band); x <= Math.floor(W/2 + band); x++) {
@@ -309,7 +630,7 @@
 
       return (
         <Card
-          title="Level 3 – Sealant Splash"
+          title="Level 4 – Sealant Splash"
           footer={<div>
             <p className="mb-1">Fact: Sealants protect deep grooves of molars from food and bacteria.</p>
             <p>Goal: Draw a cross through the center <b>or</b> reach <b>≥20%</b> coverage before time runs out.</p>
@@ -340,7 +661,7 @@
       );
     }
 
-    /* ---------- Level 4: High-risk plan (exactly 4 visits, every 3 months) ---------- */
+    /* ---------- Level 5: Checkup Challenge ---------- */
     function CheckupChallenge({ onComplete, onFail }) {
       const [months, setMonths] = useState(Array.from({ length: 12 }, (_, i) => ({ i, appt: false })));
       const [msg, setMsg] = useState("");
@@ -361,7 +682,7 @@
 
       return (
         <Card
-          title="Level 4 – Checkup Challenge (High-risk = every 3 months)"
+          title="Level 5 – Checkup Challenge (High-risk = every 3 months)"
           footer={<div>
             <p className="mb-1">Goal: Select <b>exactly four</b> checkups spaced <b>every 3 months</b> (e.g., Jan/Apr/Jul/Oct), then submit.</p>
             <p>Tip: Regular 3-month recalls help with fluoride, sealants, and early detection.</p>
@@ -394,8 +715,9 @@
       <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-xl text-sm">{text}</div>
     );
 
+    /* ---------- App Shell ---------- */
     function CariesPreventionGame() {
-      const [level, setLevel] = useState(0);
+      const [level, setLevel] = useState(0); // 0..5 (five levels)
       const [score, setScore] = useState(0);
       const [showHowTo, setShowHowTo] = useState(true);
       const next = () => setLevel(l => l + 1);
@@ -410,23 +732,30 @@
           {showHowTo && (
             <Card title="How to Play">
               <ul className="list-disc ml-6 text-sm text-gray-700 space-y-1">
-                <li><b>Brush Boss:</b> 20 teeth (2×10). Clean the 10 yellow ones.</li>
-                <li><b>Floss Frenzy:</b> Clear all interdental debris by dragging/tapping the yellow gaps.</li>
-                <li><b>Sealant Splash:</b> Draw a cross through the center or reach ≥20% coverage.</li>
-                <li><b>Checkup Challenge:</b> High-risk = exactly four visits, every 3 months.</li>
+                <li><b>Level 1 – Candy Crack:</b> Drop candy to make cracks, then brush side‑to‑side to clean back to 0.</li>
+                <li><b>Level 2 – Brush Boss:</b> 20 teeth (2×10). Clean the 10 yellow ones.</li>
+                <li><b>Level 3 – Floss Frenzy:</b> Clear interdental debris by dragging/tapping the yellow gaps.</li>
+                <li><b>Level 4 – Sealant Splash:</b> Draw a cross through the center or reach ≥20% coverage.</li>
+                <li><b>Level 5 – Checkup Challenge:</b> High‑risk = exactly four visits, every 3 months.</li>
               </ul>
               <div className="mt-4"><Button onClick={() => setShowHowTo(false)} variant="success">Start</Button></div>
             </Card>
           )}
 
           {!showHowTo && level === 0 && (
+            <CandyCrack
+              onComplete={() => { setScore(s => s + 80); next(); }}
+            />
+          )}
+
+          {level === 1 && (
             <BrushBoss
               onComplete={() => { setScore(s => s + 100); next(); }}
               onFail={() => { setScore(s => Math.max(0, s - 20)); next(); }}
             />
           )}
 
-          {level === 1 && (
+          {level === 2 && (
             <div className="w-full flex flex-col items-center gap-4">
               <FactBanner text="Floss once a day. Slide between teeth, curve around each tooth in a “C” shape, and move up & down." />
               <FlossFrenzy
@@ -436,7 +765,7 @@
             </div>
           )}
 
-          {level === 2 && (
+          {level === 3 && (
             <div className="w-full flex flex-col items-center gap-4">
               <FactBanner text="Sealants coat the deep grooves of molars and can dramatically reduce cavities." />
               <SealantSplash
@@ -446,7 +775,7 @@
             </div>
           )}
 
-          {level === 3 && (
+          {level === 4 && (
             <div className="w-full flex flex-col items-center gap-4">
               <FactBanner text="High-risk children often need recall every 3 months for fluoride, sealants, and early detection." />
               <CheckupChallenge
@@ -456,12 +785,13 @@
             </div>
           )}
 
-          {level >= 4 && (
+          {level >= 5 && (
             <Card title="You Did It!">
               <p className="text-gray-700">
-                You mastered <b>brushing</b>, <b>flossing</b>, <b>sealants</b>, and <b>regular checkups</b>.
+                You mastered <b>candy risk</b>, <b>brushing</b>, <b>flossing</b>, <b>sealants</b>, and <b>regular checkups</b>.
               </p>
               <ul className="list-disc ml-6 mt-3 text-gray-700 text-sm">
+                <li>Limit sugary snacks; rinse or brush after treats.</li>
                 <li>Brush 2×/day for 2 minutes with fluoride toothpaste.</li>
                 <li>Floss once a day to clean where brushes can’t reach.</li>
                 <li>Ask about sealants for new molars.</li>
