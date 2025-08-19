@@ -972,23 +972,44 @@ useEffect(() => {
       <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-xl text-sm">{text}</div>
     );
 
-    /* -------------- App Shell -------------- */
-    function CariesPreventionGame() {
-      const [level, setLevel] = useState(0);
-      const [score, setScore] = useState(0);
-      const [showHowTo, setShowHowTo] = useState(true);
+   /* -------------- App Shell -------------- */
+function CariesPreventionGame() {
+  const [level, setLevel] = useState(0);
+  const [score, setScore] = useState(0);
+  const [showHowTo, setShowHowTo] = useState(true);
 
-      const soundRef = useRef(new SoundEngine());
-      const sound = soundRef.current;
+  const soundRef = useRef(new SoundEngine());
+  const sound = soundRef.current;
 
-      const next = () => setLevel(l => l + 1);
+  const next = () => setLevel(l => l + 1);
 
-      const startGame = () => {
-        // first user gesture: unlock audio + start music
-        sound.start();
-        sound.musicOn = true; sound.toggleMusic(); // ensure on
-        setShowHowTo(false);
-      };
+  // Auto-start audio + music on the very first user interaction anywhere
+  useEffect(() => {
+    const unlock = () => {
+      sound.start();                       // unlock AudioContext
+      if (!sound.musicOn) sound.toggleMusic(); // ensure music is ON
+      cleanup();
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+      window.removeEventListener("touchstart", unlock);
+    };
+    window.addEventListener("pointerdown", unlock);
+    window.addEventListener("keydown", unlock);
+    window.addEventListener("touchstart", unlock);
+    return cleanup;
+  }, []); // sound from useRef is stable
+
+  // Start button also guarantees music is ON
+  const startGame = () => {
+    sound.start();                       // unlock audio
+    if (!sound.musicOn) sound.toggleMusic(); // turn ON (no double toggle)
+    setShowHowTo(false);
+  };
+
+
+
 
       return (
         <SoundContext.Provider value={sound}>
