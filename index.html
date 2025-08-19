@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Caries Prevention Quest</title>
-  <meta name="description" content="Kid‑friendly web game: candy cracks, OHI, floss, sealants, and regular visits." />
+  <meta name="description" content="Kid-friendly web game: candy cracks, OHI, floss, sealants, and regular visits." />
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html,body{height:100%}
@@ -20,7 +20,142 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <script type="text/babel">
-    const { useEffect, useMemo, useRef, useState } = React;
+    const { useEffect, useMemo, useRef, useState, useContext, createContext } = React;
+
+    /* -------------------------
+       Minimal sound engine
+       ------------------------- */
+    class SoundEngine {
+      constructor(){
+        this.ctx = null;
+        this.master = null;
+        this.sfx = null;
+        this.music = null;
+        this.musicTimer = null;
+        this.enabled = false;
+        this.musicOn = false;
+        this.muted = false;
+        this.step = 0;
+      }
+      start(){
+        if (this.enabled) return;
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const master = ctx.createGain(); master.gain.value = 0.6; master.connect(ctx.destination);
+        const sfx = ctx.createGain(); sfx.gain.value = 0.9; sfx.connect(master);
+        const music = ctx.createGain(); music.gain.value = 0.35; music.connect(master);
+        this.ctx = ctx; this.master = master; this.sfx = sfx; this.music = music;
+        this.enabled = true;
+      }
+      toggleMute(){
+        this.muted = !this.muted;
+        if (this.master) this.master.gain.value = this.muted ? 0 : 0.6;
+      }
+      toggleMusic(){
+        if (!this.enabled) this.start();
+        this.musicOn = !this.musicOn;
+        if (this.musicOn) this._startMusic();
+        else this._stopMusic();
+      }
+      _startMusic(){
+        if (this.musicTimer) return;
+        // Simple happy arpeggio loop in C major
+        const scale = [261.63,293.66,329.63,349.23,392.00,440.00,493.88]; // C D E F G A B
+        this.step = 0;
+        this.musicTimer = setInterval(()=>{
+          if (!this.enabled || !this.musicOn) return;
+          const root = 0; // C
+          const pattern = [0,2,4,5,4,2,0,2]; // arpeggio-ish
+          const i = pattern[this.step % pattern.length];
+          const f1 = scale[(root + i) % scale.length];
+          const f2 = scale[(root + i + 4) % scale.length]; // a third above
+          this._tone(f1, 0.22, "sine", 0.03, this.music);
+          this._tone(f2, 0.22, "triangle", 0.02, this.music, 0.02);
+          if (this.step % 4 === 0) this._tone(130.81, 0.32, "sine", 0.015, this.music); // soft bass C3
+          this.step++;
+        }, 320);
+      }
+      _stopMusic(){
+        if (this.musicTimer) { clearInterval(this.musicTimer); this.musicTimer = null; }
+      }
+
+      _tone(freq, dur=0.1, type="sine", gain=0.05, targetNode=this.sfx, attack=0.005){
+        if (!this.enabled || this.muted) return;
+        const t = this.ctx.currentTime;
+        const o = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        o.type = type; o.frequency.setValueAtTime(freq, t);
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(gain, t + attack);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g).connect(targetNode);
+        o.start(t); o.stop(t + dur + 0.05);
+      }
+      _noise(dur=0.05, gain=0.04, type="white", targetNode=this.sfx){
+        if (!this.enabled || this.muted) return;
+        const t = this.ctx.currentTime;
+        const bufferSize = Math.floor(this.ctx.sampleRate * dur);
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = (Math.random()*2-1) * (type==="white"?1:1);
+        const src = this.ctx.createBufferSource(); src.buffer = buffer;
+        const g = this.ctx.createGain(); g.gain.value = gain;
+        // gentle filter to make it less harsh
+        const f = this.ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1800;
+        src.connect(f).connect(g).connect(targetNode);
+        src.start(t);
+      }
+
+      play(kind){
+        if (!this.enabled || this.muted) return;
+        switch(kind){
+          case "click":
+            this._tone(900, 0.06, "square", 0.03);
+            break;
+          case "drop":
+            this._tone(700, 0.08, "triangle", 0.03);
+            this._tone(500, 0.10, "sine", 0.02, this.sfx, 0.01);
+            break;
+          case "impact": { // downward blip
+            const t = this.ctx.currentTime;
+            const o = this.ctx.createOscillator();
+            const g = this.ctx.createGain();
+            o.type = "sawtooth";
+            o.frequency.setValueAtTime(800, t);
+            o.frequency.exponentialRampToValueAtTime(220, t + 0.12);
+            g.gain.setValueAtTime(0.04, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+            o.connect(g).connect(this.sfx);
+            o.start(t); o.stop(t + 0.16);
+            break;
+          }
+          case "brushTick":
+            this._noise(0.04, 0.025);
+            break;
+          case "clean":
+            this._tone(1200, 0.05, "triangle", 0.02);
+            this._tone(1600, 0.06, "sine", 0.02, this.sfx, 0.005);
+            break;
+          case "floss":
+            this._tone(1000, 0.04, "square", 0.02);
+            break;
+          case "paint":
+            this._tone(600, 0.05, "triangle", 0.015);
+            break;
+          case "success":
+            this._tone(880, 0.12, "triangle", 0.03);
+            this._tone(1175, 0.14, "triangle", 0.03, this.sfx, 0.01);
+            this._tone(1760, 0.16, "sine", 0.025, this.sfx, 0.01);
+            break;
+          case "fail":
+            this._tone(200, 0.16, "sawtooth", 0.03);
+            this._tone(140, 0.18, "sawtooth", 0.03, this.sfx, 0.01);
+            break;
+        }
+      }
+    }
+
+    const SoundContext = createContext(null);
+    const useSound = () => useContext(SoundContext);
 
     /* -------------------------------------------
        Tooth SVGs (primary dentition silhouettes)
@@ -29,13 +164,12 @@
       "secondMolar","firstMolar","canine","lateralIncisor","centralIncisor",
       "centralIncisor","lateralIncisor","canine","firstMolar","secondMolar"
     ];
-    const ANTERIOR_ARCH = [ // central, lateral, canine (R to L mirrored)
+    const ANTERIOR_ARCH = [
       "canine","lateralIncisor","centralIncisor",
       "centralIncisor","lateralIncisor","canine"
     ];
 
     function pathForTooth(type){
-      // Simple, kid-friendly silhouettes (viewBox 0 0 100 120)
       switch(type){
         case "centralIncisor":
           return "M50 6 C36 6,22 20,22 38 C22 60,36 64,38 78 C42 96,48 112,50 112 C52 112,58 96,62 78 C64 64,78 60,78 38 C78 20,64 6,50 6 Z";
@@ -69,7 +203,6 @@
             </radialGradient>
           </defs>
           <path d={d} fill={clean ? "url(#shine)" : "#fde68a"} stroke={stroke} strokeWidth="2"/>
-          {/* Minimal surface lines */}
           {type.includes("Incisor") && (
             <path d="M30 44 C40 38,60 38,70 44" stroke={clean ? "#94a3b8" : "#b45309"} strokeWidth="2" fill="none" opacity="0.35" />
           )}
@@ -101,23 +234,30 @@
       </div>
     );
 
-    const Button = ({ children, onClick, variant = "default", disabled }) => (
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        className={`px-4 py-2 rounded-xl font-medium shadow-sm transition-all mr-2 mb-2 ${
-          variant === "default"
-            ? "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300"
-            : variant === "ghost"
-            ? "bg-white border border-gray-300 hover:bg-gray-50"
-            : variant === "success"
-            ? "bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-emerald-300"
-            : "bg-slate-800 text-white hover:bg-slate-900"
-        }`}
-      >
-        {children}
-      </button>
-    );
+    const Button = ({ children, onClick, variant = "default", disabled }) => {
+      const sound = useSound();
+      const handle = (e) => {
+        sound?.play("click");
+        onClick?.(e);
+      };
+      return (
+        <button
+          onClick={handle}
+          disabled={disabled}
+          className={`px-4 py-2 rounded-xl font-medium shadow-sm transition-all mr-2 mb-2 ${
+            variant === "default"
+              ? "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300"
+              : variant === "ghost"
+              ? "bg-white border border-gray-300 hover:bg-gray-50"
+              : variant === "success"
+              ? "bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-emerald-300"
+              : "bg-slate-800 text-white hover:bg-slate-900"
+          }`}
+        >
+          {children}
+        </button>
+      );
+    };
 
     function useTimer(active, seconds, onDone) {
       const [time, setTime] = useState(seconds);
@@ -136,12 +276,12 @@
     }
 
     /* -----------------------------------------
-       Level 1: Candy Crack (robust brush loop)
+       Level 1: Candy Crack
        ----------------------------------------- */
     function CandyCrack({ onComplete }) {
+      const sound = useSound();
       const sceneRef = useRef(null);
 
-      // logical state
       const [hits, setHits] = useState(0);
       const [severity, setSeverity] = useState(0);
       const [played, setPlayed] = useState(false);
@@ -149,33 +289,40 @@
       const [cap, setCap] = useState("Drop a candy onto the tooth.");
       const canNext = played && severity === 0;
 
-      // refs
       const hitsRef = useRef(0);
       const sevRef  = useRef(0);
       const brushIntervalRef = useRef(null);
       useEffect(() => { hitsRef.current = hits; }, [hits]);
       useEffect(() => { sevRef.current  = severity; }, [severity]);
 
-      // smoothed bar
-      const [sevBar, setSevBar] = useState(0);
-      const sevBarRef = useRef(0);
-      const sevAnimRef = useRef(null);
-      useEffect(() => {
-        if (sevAnimRef.current) cancelAnimationFrame(sevAnimRef.current);
-        const step = () => {
-          const target = sevRef.current;
-          const curr   = sevBarRef.current;
-          const diff   = target - curr;
-          if (Math.abs(diff) < 0.2) { sevBarRef.current = target; setSevBar(target); sevAnimRef.current = null; return; }
-          const next = curr + diff * 0.2;
-          sevBarRef.current = next; setSevBar(next);
-          sevAnimRef.current = requestAnimationFrame(step);
-        };
-        sevAnimRef.current = requestAnimationFrame(step);
-        return () => sevAnimRef.current && cancelAnimationFrame(sevAnimRef.current);
-      }, [severity]);
+    // smoothed bar (snappier)
+const [sevBar, setSevBar] = useState(0);
+const sevBarRef = useRef(0);
+const sevAnimRef = useRef(null);
+useEffect(() => {
+  if (sevAnimRef.current) cancelAnimationFrame(sevAnimRef.current);
+  const SMOOTHING = 0.45; // was 0.2
+  const step = () => {
+    const target = sevRef.current;
+    const curr   = sevBarRef.current;
+    const diff   = target - curr;
+    if (Math.abs(diff) < 0.2) {
+      sevBarRef.current = target;
+      setSevBar(target);
+      sevAnimRef.current = null;
+      return;
+    }
+    const next = curr + diff * SMOOTHING;
+    sevBarRef.current = next;
+    setSevBar(next);
+    sevAnimRef.current = requestAnimationFrame(step);
+  };
+  sevAnimRef.current = requestAnimationFrame(step);
+  return () => sevAnimRef.current && cancelAnimationFrame(sevAnimRef.current);
+}, [severity]);
 
-      // cache DOM nodes
+
+
       const els = useRef({});
       useEffect(() => {
         const scene = sceneRef.current;
@@ -232,7 +379,6 @@
         const sw = 1.4 + (s/100)*3.8;
         [mainCrack, branch1, branch2, branch3].forEach(p=>p && (p.style.strokeWidth = sw.toFixed(2)));
 
-        // darken with severity
         const r = Math.round(0x4b + (0x1a-0x4b)*(s/100));
         const g = Math.round(0x3b + (0x14-0x3b)*(s/100));
         const b = Math.round(0x34 + (0x12-0x34)*(s/100));
@@ -252,6 +398,7 @@
         const ns = clamp(sevRef.current + deltaSev, 0, 100);
         setHits(nh); setSeverity(ns); setPlayed(true);
         hitsRef.current = nh; sevRef.current = ns;
+        sound?.play("impact");
 
         const { plaque } = els.current;
         if (plaque) plaque.style.opacity = String(Math.min(0.45, 0.10 + nh * 0.03));
@@ -265,6 +412,7 @@
       }
 
       function dropCandy() {
+        sound?.play("drop");
         const { scene } = els.current;
         if (!scene) return;
         const rect = scene.getBoundingClientRect();
@@ -310,72 +458,81 @@
         if (brush) { brush.style.opacity = "0"; brush.style.transform = "translateX(0) rotate(0deg)"; }
       }
 
-      // ✅ robust brush loop using setInterval (never adds damage)
-      function runBrush() {
-        const { scene, brush, foam, plaque } = els.current;
-        if (!scene || !brush) return;
-        if (brushing) return;
-        setBrushing(true);
+     function runBrush() {
+  const { scene, brush, foam, plaque } = els.current;
+  if (!scene || !brush) return;
+  if (brushing) return;
+  setBrushing(true);
 
-        // show brush
-        const rect = scene.getBoundingClientRect();
-        brush.style.opacity = "1";
-        brush.style.transition = "none";
-        brush.style.left = `${rect.width/2 - 80}px`;
-        brush.style.top  = `${rect.height*0.22}px`;
+  const rect = scene.getBoundingClientRect();
+  brush.style.opacity = "1";
+  brush.style.transition = "none";
+  brush.style.left = `${rect.width/2 - 80}px`;
+  brush.style.top  = `${rect.height*0.22}px`;
 
-        // motion state
-        let offset = 0, dir = 1;
-        const maxSwing = 34, speed = 3.4;
+  // tuned parameters
+  const INTERVAL_MS = 16;     // was 60
+  const SPEED = 5.5;          // was 3.4
+  const MAX_SWING = 42;       // was 34
+  const DECAY_PER_TICK = 0.75;// was 0.28  (≈ ~45/sec at 16ms)
+  const CLEAN_BUFF_MS = 1200; // brief buff even if already clean
+  const SOUND_EVERY = 5;      // throttle brush tick sound
 
-        // short “buff” animation even if already clean
-        const cleanBuffMs = 1800;
-        const start = Date.now();
+  let offset = 0, dir = 1, tickN = 0;
+  const startT = Date.now();
 
-        if (brushIntervalRef.current) clearInterval(brushIntervalRef.current);
+  if (brushIntervalRef.current) clearInterval(brushIntervalRef.current);
 
-        brushIntervalRef.current = setInterval(() => {
-          // move brush
-          offset += dir * speed;
-          if (offset > maxSwing || offset < -maxSwing) dir *= -1;
-          const tilt = (offset / maxSwing) * 6;
-          brush.style.transform = `translateX(${offset}px) rotate(${tilt}deg)`;
-          if (foam) {
-            const pulsate = 0.25 + 0.5 * Math.abs(Math.sin(offset * 0.12));
-            foam.style.opacity = pulsate.toFixed(2);
-          }
+  brushIntervalRef.current = setInterval(() => {
+    // motion
+    offset += dir * SPEED;
+    if (offset > MAX_SWING || offset < -MAX_SWING) dir *= -1;
+    const tilt = (offset / MAX_SWING) * 8;
+    brush.style.transform = `translateX(${offset}px) rotate(${tilt}deg)`;
 
-          // scrub severity down if needed
-          if (sevRef.current > 0) {
-            const ns = Math.max(0, sevRef.current - 0.28);
-            setSeverity(ns);
-            sevRef.current = ns;
-            applyCrackVisuals(ns, hitsRef.current);
+    // foam pulse
+    if (foam) {
+      const pulsate = 0.35 + 0.5 * Math.abs(Math.sin(offset * 0.12));
+      foam.style.opacity = pulsate.toFixed(2);
+    }
 
-            if (plaque) {
-              const curr = parseFloat(plaque.style.opacity || "0.10");
-              plaque.style.opacity = String(Math.max(0.05, curr - 0.004));
-            }
-          }
+    // subtle brushing noise (throttled)
+    if (++tickN % SOUND_EVERY === 0) sound?.play("brushTick");
 
-          const stillDirty = sevRef.current > 0;
-          const stillBuffing = Date.now() - start < cleanBuffMs;
-          if (!stillDirty && !stillBuffing) finishBrushing();
-        }, 16); // ~60fps
+    // scrub severity down faster
+    if (sevRef.current > 0) {
+      const ns = Math.max(0, sevRef.current - DECAY_PER_TICK);
+      setSeverity(ns);
+      sevRef.current = ns;
+      applyCrackVisuals(ns, hitsRef.current);
 
-        setCap("Brushing… small circles!");
-
-        function finishBrushing(){
-          if (brushIntervalRef.current) {
-            clearInterval(brushIntervalRef.current);
-            brushIntervalRef.current = null;
-          }
-          brush.style.opacity = "0";
-          brush.style.transform = "translateX(0) rotate(0deg)";
-          setBrushing(false);
-          setCap("All clean — minty fresh! 🪥");
-        }
+      if (plaque) {
+        const curr = parseFloat(plaque.style.opacity || "0.10");
+        plaque.style.opacity = String(Math.max(0.04, curr - 0.006));
       }
+    }
+
+    const stillDirty = sevRef.current > 0;
+    const stillBuffing = Date.now() - startT < CLEAN_BUFF_MS;
+    if (!stillDirty && !stillBuffing) finishBrushing();
+  }, INTERVAL_MS);
+
+  setCap("Brushing… small circles!");
+
+  function finishBrushing(){
+    if (brushIntervalRef.current) {
+      clearInterval(brushIntervalRef.current);
+      brushIntervalRef.current = null;
+    }
+    brush.style.opacity = "0";
+    brush.style.transform = "translateX(0) rotate(0deg)";
+    setBrushing(false);
+    setCap("All clean — minty fresh! 🪥");
+    sound?.play("success");
+  }
+}
+
+
 
       const hitPct = Math.min(100, hits * 8);
       const severityPct = Math.min(100, Math.max(0, sevBar));
@@ -384,7 +541,7 @@
         <Card
           title="Level 1 – Candy Crack (Cause & Clean)"
           footer={<div>
-            <p className="mb-1">Goal: Drop candy to make cracks, then brush side‑to‑side to reduce severity back to <b>0</b>.</p>
+            <p className="mb-1">Goal: Drop candy to make cracks, then brush side-to-side to reduce severity back to <b>0</b>.</p>
             <p>Unlock <b>Next Level</b> after you’ve dropped candy at least once and fully cleaned the tooth.</p>
           </div>}
         >
@@ -396,7 +553,6 @@
             <span className="text-sm text-gray-600">{cap}</span>
           </div>
 
-          {/* HUD */}
           <div className="grid grid-cols-2 gap-4 mb-3">
             <div>
               <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
@@ -416,7 +572,6 @@
             </div>
           </div>
 
-          {/* Scene */}
           <div ref={sceneRef} className="relative h-[420px] rounded-2xl overflow-hidden bg-gradient-to-b from-sky-100 to-sky-200 border border-sky-300">
             <div className="absolute left-3 bottom-3 bg-white/80 text-slate-800 text-sm px-3 py-2 rounded-xl border border-white">
               {cap}
@@ -458,10 +613,10 @@
     }
 
     /* -----------------------------------------
-       Level 2: Brush Boss (teeth turn white)
+       Level 2: Brush Boss
        ----------------------------------------- */
     function BrushBoss({ onComplete, onFail }) {
-      // 20 teeth (2 rows × 10); randomize 10 dirty
+      const sound = useSound();
       const cols = 10, rows = 2, total = cols * rows;
       const [grid, setGrid] = useState(() => {
         const arr = Array(total).fill(false);
@@ -473,19 +628,22 @@
         return arr;
       });
       const cleaned = useMemo(() => 10 - grid.filter(Boolean).length, [grid]);
-      const time = useTimer(true, 30, () => onFail?.());
+      const time = useTimer(true, 30, () => { sound?.play("fail"); onFail?.(); });
       const [brushing, setBrushing] = useState(false);
+
+      useEffect(() => {
+        if (cleaned >= 10) { sound?.play("success"); onComplete?.(); }
+      }, [cleaned, onComplete, sound]);
 
       const cleanIndex = (idx) => {
         setGrid(g => {
-          if (!g[idx]) return g;           // already clean
-          const copy = g.slice();          // new array → triggers re-render
-          copy[idx] = false;               // mark clean
+          if (!g[idx]) return g;
+          const copy = g.slice();
+          copy[idx] = false;
           return copy;
         });
+        sound?.play("clean");
       };
-
-      useEffect(() => { if (cleaned >= 10) onComplete?.(); }, [cleaned, onComplete]);
 
       return (
         <Card
@@ -512,9 +670,9 @@
           >
             {grid.map((hasPlaque, i) => {
               const col = i % cols;
-              const row = Math.floor(i / cols);     // 0 = top (maxillary), 1 = bottom (mandibular)
+              const row = Math.floor(i / cols);
               const type = PRIMARY_ARCH[col];
-              const flipped = row === 0;            // flip top row
+              const flipped = row === 0;
               return (
                 <div
                   key={i}
@@ -542,16 +700,17 @@
     }
 
     /* -------------------------------------------------------------
-       Level 3: Floss Frenzy (anterior only: 6 upper + 6 lower)
+       Level 3: Floss Frenzy
        ------------------------------------------------------------- */
     function FlossFrenzy({ onComplete, onFail }) {
-      const gapsPerRow = 5;         // 6 anterior teeth → 5 contacts
+      const sound = useSound();
+      const gapsPerRow = 5;
       const rows = 2;
       const totalGaps = gapsPerRow * rows;
 
       const [gaps, setGaps] = useState(() => {
         const arr = Array(totalGaps).fill(false);
-        let debris = 6;             // start with 6 debris pieces
+        let debris = 6;
         while (debris > 0) {
           const i = Math.floor(Math.random() * totalGaps);
           if (!arr[i]) { arr[i] = true; debris--; }
@@ -559,8 +718,12 @@
         return arr;
       });
 
-      const time = useTimer(true, 25, () => onFail?.());
+      const time = useTimer(true, 25, () => { sound?.play("fail"); onFail?.(); });
       const cleared = useMemo(() => gaps.filter(v => !v).length, [gaps]);
+
+      useEffect(() => {
+        if (cleared === totalGaps) { sound?.play("success"); onComplete?.(); }
+      }, [cleared, totalGaps, onComplete, sound]);
 
       const flossGap = (i) => setGaps(g => {
         if (!g[i]) return g;
@@ -569,23 +732,19 @@
         return copy;
       });
 
-      useEffect(() => {
-        if (cleared === totalGaps) onComplete?.();
-      }, [cleared, totalGaps, onComplete]);
-
       const Gap = ({ dirty, onDrag, idx }) => (
         <div
           className={`w-2 h-12 mx-1 rounded-md border transition-all ${dirty ? "bg-yellow-300 border-yellow-400" : "bg-white border-gray-300"}`}
-          onMouseDown={onDrag}
-          onMouseEnter={(e) => (e.buttons === 1) && onDrag()}
-          onTouchStart={onDrag}
+          onMouseDown={() => { onDrag(); sound?.play("floss"); }}
+          onMouseEnter={(e) => { if (e.buttons === 1) { onDrag(); sound?.play("floss"); } }}
+          onTouchStart={() => { onDrag(); sound?.play("floss"); }}
           data-idx={idx}
         />
       );
 
       const Row = ({ rowIndex }) => {
         const start = rowIndex * gapsPerRow;
-        const flipped = rowIndex === 0;   // flip top row (maxillary)
+        const flipped = rowIndex === 0;
         const segments = [];
         for (let t = 0; t < 6; t++) {
           const type = ANTERIOR_ARCH[t];
@@ -630,13 +789,14 @@
     }
 
     /* -------------------------------
-       Level 4: Sealant Splash (same)
+       Level 4: Sealant Splash
        ------------------------------- */
     function SealantSplash({ onComplete, onFail }) {
+      const sound = useSound();
       const canvasRef = useRef(null);
       const [coveredPct, setCoveredPct] = useState(0);
       const [painting, setPainting] = useState(false);
-      const time = useTimer(true, 35, () => onFail?.());
+      const time = useTimer(true, 35, () => { sound?.play("fail"); onFail?.(); });
 
       useEffect(() => {
         const canvas = canvasRef.current;
@@ -679,7 +839,6 @@
         }
         const pct = Math.min(100, Math.round((blueish / (white + blueish + 1)) * 100));
 
-        // crude cross detection
         const band = 15;
         let vBlue = 0, vTotal = 0, hBlue = 0, hTotal = 0;
         for (let x = Math.floor(W/2 - band); x <= Math.floor(W/2 + band); x++) {
@@ -706,10 +865,11 @@
         ctx.globalCompositeOperation = "source-over";
         ctx.fillStyle = "rgba(59,130,246,0.6)";
         ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill();
+        sound?.play("paint");
 
         const { pct, isCross } = computeStats();
         setCoveredPct(pct);
-        if (pct >= 20 || isCross) onComplete?.();
+        if (pct >= 20 || isCross) { sound?.play("success"); onComplete?.(); }
       };
 
       const handlePointer = (clientX, clientY) => {
@@ -752,29 +912,35 @@
     }
 
     /* --------------------------------
-       Level 5: Checkup Challenge (same)
+       Level 5: Checkup Challenge
        -------------------------------- */
     function CheckupChallenge({ onComplete, onFail }) {
+      const sound = useSound();
       const [months, setMonths] = useState(Array.from({ length: 12 }, (_, i) => ({ i, appt: false })));
       const [msg, setMsg] = useState("");
 
-      const toggleMonth = (i) => { setMonths(arr => arr.map(m => (m.i === i ? { ...m, appt: !m.appt } : m))); setMsg(""); };
+      const toggleMonth = (i) => {
+        setMonths(arr => arr.map(m => (m.i === i ? { ...m, appt: !m.appt } : m)));
+        setMsg("");
+        sound?.play("click");
+      };
 
       const validate = () => {
         const picks = months.filter(m => m.appt).map(m => m.i).sort((a,b) => a-b);
-        if (picks.length !== 4) { setMsg("Select exactly FOUR checkups for a 3‑month interval plan."); onFail?.(); return; }
+        if (picks.length !== 4) { setMsg("Select exactly FOUR checkups for a 3-month interval plan."); sound?.play("fail"); onFail?.(); return; }
         for (let k = 0; k < 4; k++) {
           const a = picks[k], b = picks[(k+1)%4];
           const diff = (b - a + 12) % 12;
-          if (diff !== 3) { setMsg("Intervals must be exactly 3 months apart."); onFail?.(); return; }
+          if (diff !== 3) { setMsg("Intervals must be exactly 3 months apart."); sound?.play("fail"); onFail?.(); return; }
         }
         setMsg("Great plan! Four visits, each 3 months apart.");
+        sound?.play("success");
         onComplete?.();
       };
 
       return (
         <Card
-          title="Level 5 – Checkup Challenge (High‑risk = every 3 months)"
+          title="Level 5 – Checkup Challenge (High-risk = every 3 months)"
           footer={<div>
             <p className="mb-1">Goal: Choose <b>four</b> months, exactly 3 apart (e.g., Jan/Apr/Jul/Oct).</p>
           </div>}
@@ -811,90 +977,119 @@
       const [level, setLevel] = useState(0);
       const [score, setScore] = useState(0);
       const [showHowTo, setShowHowTo] = useState(true);
+
+      const soundRef = useRef(new SoundEngine());
+      const sound = soundRef.current;
+
       const next = () => setLevel(l => l + 1);
 
+      const startGame = () => {
+        // first user gesture: unlock audio + start music
+        sound.start();
+        sound.musicOn = true; sound.toggleMusic(); // ensure on
+        setShowHowTo(false);
+      };
+
       return (
-        <div className="min-h-screen w-full bg-gradient-to-b from-sky-50 to-white flex flex-col items-center px-4 py-8">
-          <div className="w-full max-w-4xl flex items-center justify-between mb-6">
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Caries Prevention Quest</h1>
-            <div className="text-sm text-gray-600">Score: <span className="font-semibold">{score}</span></div>
-          </div>
+        <SoundContext.Provider value={sound}>
+          <div className="min-h-screen w-full bg-gradient-to-b from-sky-50 to-white flex flex-col items-center px-4 py-8">
+            <div className="w-full max-w-4xl flex items-center justify-between mb-6">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Caries Prevention Quest</h1>
+              <div className="flex items-center gap-3 text-sm text-gray-600">
+                <span>Score: <span className="font-semibold">{score}</span></span>
+                <div className="flex items-center gap-1">
+                  <button
+                    className="px-2 py-1 rounded-lg border border-gray-300 bg-white hover:bg-gray-50"
+                    onClick={() => sound.toggleMusic()}
+                    title="Toggle music"
+                  >♪ Music</button>
+                  <button
+                    className="px-2 py-1 rounded-lg border border-gray-300 bg-white hover:bg-gray-50"
+                    onClick={() => sound.toggleMute()}
+                    title="Mute all"
+                  >🔇 Mute</button>
+                </div>
+              </div>
+            </div>
 
-          {showHowTo && (
-            <Card title="How to Play">
-              <ul className="list-disc ml-6 text-sm text-gray-700 space-y-1">
-                <li><b>Level 1 – Candy Crack:</b> Drop candy to make cracks, then brush side‑to‑side to clean back to 0.</li>
-                <li><b>Level 2 – Brush Boss:</b> 20 primary teeth (2×10). Clean the 10 yellow ones.</li>
-                <li><b>Level 3 – Floss Frenzy:</b> Anterior only (6 upper + 6 lower). Clear all contacts.</li>
-                <li><b>Level 4 – Sealant Splash:</b> Draw a cross or reach ≥20% coverage.</li>
-                <li><b>Level 5 – Checkup Challenge:</b> High‑risk recall every 3 months.</li>
-              </ul>
-              <div className="mt-4"><Button onClick={() => setShowHowTo(false)} variant="success">Start</Button></div>
-            </Card>
-          )}
+            {showHowTo && (
+              <Card title="How to Play">
+                <ul className="list-disc ml-6 text-sm text-gray-700 space-y-1">
+                  <li><b>Level 1 – Candy Crack:</b> Drop candy to make cracks, then brush side-to-side to clean back to 0.</li>
+                  <li><b>Level 2 – Brush Boss:</b> 20 primary teeth (2×10). Clean the 10 yellow ones.</li>
+                  <li><b>Level 3 – Floss Frenzy:</b> Anterior only (6 upper + 6 lower). Clear all contacts.</li>
+                  <li><b>Level 4 – Sealant Splash:</b> Draw a cross or reach ≥20% coverage.</li>
+                  <li><b>Level 5 – Checkup Challenge:</b> High-risk recall every 3 months.</li>
+                </ul>
+                <div className="mt-4">
+                  <Button onClick={startGame} variant="success">Start</Button>
+                </div>
+              </Card>
+            )}
 
-          {!showHowTo && level === 0 && (
-            <CandyCrack onComplete={() => { setScore(s => s + 80); next(); }} />
-          )}
+            {!showHowTo && level === 0 && (
+              <CandyCrack onComplete={() => { setScore(s => s + 80); next(); }} />
+            )}
 
-          {level === 1 && (
-            <BrushBoss
-              onComplete={() => { setScore(s => s + 100); next(); }}
-              onFail={() => { setScore(s => Math.max(0, s - 20)); next(); }}
-            />
-          )}
-
-          {level === 2 && (
-            <div className="w-full flex flex-col items-center gap-4">
-              <FactBanner text="Floss once a day. Curve around each tooth in a “C” shape and move up & down." />
-              <FlossFrenzy
+            {level === 1 && (
+              <BrushBoss
                 onComplete={() => { setScore(s => s + 100); next(); }}
                 onFail={() => { setScore(s => Math.max(0, s - 20)); next(); }}
               />
-            </div>
-          )}
+            )}
 
-          {level === 3 && (
-            <div className="w-full flex flex-col items-center gap-4">
-              <FactBanner text="Sealants protect deep grooves of molars and reduce cavities." />
-              <SealantSplash
-                onComplete={() => { setScore(s => s + 120); next(); }}
-                onFail={() => { setScore(s => Math.max(0, s - 20)); next(); }}
-              />
-            </div>
-          )}
-
-          {level === 4 && (
-            <div className="w-full flex flex-col items-center gap-4">
-              <FactBanner text="High‑risk children often need recall every 3 months for fluoride, sealants, and early detection." />
-              <CheckupChallenge
-                onComplete={() => { setScore(s => s + 80); next(); }}
-                onFail={() => { setScore(s => Math.max(0, s - 20)); }}
-              />
-            </div>
-          )}
-
-          {level >= 5 && (
-            <Card title="You Did It!">
-              <p className="text-gray-700">
-                You mastered <b>candy risk</b>, <b>brushing</b>, <b>flossing</b>, <b>sealants</b>, and <b>regular checkups</b>.
-              </p>
-              <ul className="list-disc ml-6 mt-3 text-gray-700 text-sm">
-                <li>Limit sugary snacks; rinse or brush after treats.</li>
-                <li>Brush 2×/day for 2 minutes with fluoride toothpaste.</li>
-                <li>Floss once a day to clean where brushes can’t reach.</li>
-                <li>Ask about sealants for new molars.</li>
-                <li>High‑risk recall: every 3 months.</li>
-              </ul>
-              <div className="mt-4 flex items-center">
-                <Button onClick={() => { window.location.reload(); }}>Play Again</Button>
-                <Button variant="ghost" onClick={() => window.print()}>Print Tips</Button>
+            {level === 2 && (
+              <div className="w-full flex flex-col items-center gap-4">
+                <FactBanner text="Floss once a day. Curve around each tooth in a “C” shape and move up & down." />
+                <FlossFrenzy
+                  onComplete={() => { setScore(s => s + 100); next(); }}
+                  onFail={() => { setScore(s => Math.max(0, s - 20)); next(); }}
+                />
               </div>
-            </Card>
-          )}
+            )}
 
-          <footer className="mt-8 text-xs text-gray-500">WesternU Dental Medicine.</footer>
-        </div>
+            {level === 3 && (
+              <div className="w-full flex flex-col items-center gap-4">
+                <FactBanner text="Sealants protect deep grooves of molars and reduce cavities." />
+                <SealantSplash
+                  onComplete={() => { setScore(s => s + 120); next(); }}
+                  onFail={() => { setScore(s => Math.max(0, s - 20)); next(); }}
+                />
+              </div>
+            )}
+
+            {level === 4 && (
+              <div className="w-full flex flex-col items-center gap-4">
+                <FactBanner text="High-risk children often need recall every 3 months for fluoride, sealants, and early detection." />
+                <CheckupChallenge
+                  onComplete={() => { setScore(s => s + 80); next(); }}
+                  onFail={() => { setScore(s => Math.max(0, s - 20)); }}
+                />
+              </div>
+            )}
+
+            {level >= 5 && (
+              <Card title="You Did It!">
+                <p className="text-gray-700">
+                  You mastered <b>candy risk</b>, <b>brushing</b>, <b>flossing</b>, <b>sealants</b>, and <b>regular checkups</b>.
+                </p>
+                <ul className="list-disc ml-6 mt-3 text-gray-700 text-sm">
+                  <li>Limit sugary snacks; rinse or brush after treats.</li>
+                  <li>Brush 2×/day for 2 minutes with fluoride toothpaste.</li>
+                  <li>Floss once a day to clean where brushes can’t reach.</li>
+                  <li>Ask about sealants for new molars.</li>
+                  <li>High-risk recall: every 3 months.</li>
+                </ul>
+                <div className="mt-4 flex items-center">
+                  <Button onClick={() => { window.location.reload(); }}>Play Again</Button>
+                  <Button variant="ghost" onClick={() => window.print()}>Print Tips</Button>
+                </div>
+              </Card>
+            )}
+
+            <footer className="mt-8 text-xs text-gray-500">WesternU Dental Medicine.</footer>
+          </div>
+        </SoundContext.Provider>
       );
     }
 
@@ -902,3 +1097,6 @@
   </script>
 </body>
 </html>
+
+
+
